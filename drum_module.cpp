@@ -68,8 +68,10 @@ static const uint8_t kSoundDrumBankMap[SOUND_DRUM_BANK_COUNT][DRUM_ROWS] = {
 };
 
 static bool soundDrumVoiceActive[DRUM_ROWS] = {false};
-static float soundDrumVoicePos[DRUM_ROWS] = {0.0f};
-static float soundDrumVoiceInc[DRUM_ROWS] = {1.0f};
+static uint32_t soundDrumVoicePosQ16[DRUM_ROWS] = {0};
+// 65536 = 1.0 in Q16 fixed-point format (1 << 16)
+static const uint32_t kQ16One = 65536U;
+static uint32_t soundDrumVoiceIncQ16[DRUM_ROWS] = {65536U};
 
 // SDr banks were perceptually hotter than synth banks; attenuate and rebalance per row.
 static const uint8_t kSoundDrumRowGainQ8[DRUM_ROWS] = {
@@ -96,14 +98,15 @@ static void triggerSoundDrum(uint8_t row) {
   if (desc == nullptr || desc->len < 2 || desc->data == nullptr) return;
 
   soundDrumVoiceActive[row] = true;
-  soundDrumVoicePos[row] = 0.0f;
+  soundDrumVoicePosQ16[row] = 0;
 
   float rowMul = 0.88f;
   if (row == 1) rowMul = 0.92f;
   else if (row == 2) rowMul = 1.05f;
   else if (row == 3) rowMul = 0.95f;
 
-  soundDrumVoiceInc[row] = constrain(drumPitch * rowMul, 0.35f, 1.25f);
+  float incF = constrain(drumPitch * rowMul, 0.35f, 1.25f);
+  soundDrumVoiceIncQ16[row] = (uint32_t)(incF * (float)kQ16One);
 }
 
 int16_t nextSoundDrumSample(uint8_t row) {
@@ -115,26 +118,29 @@ int16_t nextSoundDrumSample(uint8_t row) {
     return 0;
   }
 
-  float pos = soundDrumVoicePos[row];
-  if (pos < 0.0f) pos = 0.0f;
-  if (pos >= (float)(desc->len - 1U)) {
+  // Q16 fixed-point position: upper 16 bits = sample index, lower 16 = fraction.
+  uint32_t posQ16 = soundDrumVoicePosQ16[row];
+  uint32_t endQ16 = (uint32_t)(desc->len - 1U) << 16;
+  if (posQ16 >= endQ16) {
     soundDrumVoiceActive[row] = false;
     return 0;
   }
 
-  uint32_t idx = (uint32_t)pos;
+  uint32_t idx     = posQ16 >> 16;
   uint32_t idxNext = idx + 1U;
-  float frac = pos - (float)idx;
+  // Q8 fraction (0..255): drum data can span up to ~60 000, so Q16 would overflow int32_t.
+  // Using Q8 keeps the intermediate product well within int32_t.
+  int32_t frac8 = (int32_t)((posQ16 >> 8) & 0xFF);
 
   int32_t a = (int32_t)desc->data[idx];
   int32_t b = (int32_t)desc->data[idxNext];
-  int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
+  int32_t interp = a + (((b - a) * frac8) >> 8);
 
-  pos += soundDrumVoiceInc[row];
-  if (pos >= (float)(desc->len - 1U)) {
+  posQ16 += soundDrumVoiceIncQ16[row];
+  if (posQ16 >= endQ16) {
     soundDrumVoiceActive[row] = false;
   }
-  soundDrumVoicePos[row] = pos;
+  soundDrumVoicePosQ16[row] = posQ16;
 
   // Extra attenuation for SDr banks: these source samples are mastered much hotter.
   int32_t sample16 = (interp >> 3);
@@ -160,8 +166,8 @@ void initDrums() {
 
   for (uint8_t r = 0; r < DRUM_ROWS; r++) {
     soundDrumVoiceActive[r] = false;
-    soundDrumVoicePos[r] = 0.0f;
-    soundDrumVoiceInc[r] = 1.0f;
+    soundDrumVoicePosQ16[r] = 0;
+    soundDrumVoiceIncQ16[r] = kQ16One;
   }
   
   for (int r = 0; r < DRUM_ROWS; r++) {
@@ -269,21 +275,40 @@ void runDrumSequencer() {
 void updateDrumsControl() {
   extern uint16_t bpm;
   
-  // Mise à jour enveloppes drums + sweep fréquence
+  // Mise à jour enveloppes drums + sweep fréquence (at control rate, not audio rate)
   for (int r = 0; r < DRUM_ROWS; r++) {
     drumEnv[r].update();
     if (drumActive[r]) {
       unsigned long elapsed = millis() - drumTrigMs[r];
       const DrumBank &bank = drumBanks[currentDrumBank];
       
-      // Seule la snare utilise encore la synthèse avec sweep
-      if (r == 1) {
-        // Snare : sweep selon la bank
-        float decay = expf(-(float)elapsed / bank.snareTauMs);
-        snareFreqCurrent = bank.snareEndHz + (bank.snareStartHz - bank.snareEndHz) * decay;
-        drumSinSnare.setFreq(applyOctave(snareFreqCurrent, octaveShift));
+      if (!isSoundDrumBank((uint8_t)currentDrumBank)) {
+        // Kick (r==0): linear frequency sweep computed here instead of at audio rate
+        if (r == 0) {
+          #if ENABLE_BURROUGHS_KICK_SAMPLE
+          // Oscillator only needed for non-sample banks
+          if (currentDrumBank != 3 && currentDrumBank != 4) {
+          #endif
+            float sweepT = constrain((float)elapsed / bank.kickTauMs, 0.0f, 1.0f);
+            kickFreqCurrent = (bank.kickStartHz - sweepT * (bank.kickStartHz - bank.kickEndHz)) * drumPitch;
+            drumSinKick.setFreq(kickFreqCurrent);
+          #if ENABLE_BURROUGHS_KICK_SAMPLE
+          }
+          #endif
+        }
+        // Snare (r==1): linear frequency sweep computed here instead of at audio rate
+        else if (r == 1) {
+          float sweepT = constrain((float)elapsed / bank.snareTauMs, 0.0f, 1.0f);
+          snareFreqCurrent = (bank.snareStartHz - sweepT * (bank.snareStartHz - bank.snareEndHz)) * drumPitch;
+          drumSinSnare.setFreq(snareFreqCurrent);
+        }
+        // Clap (r==3): linear frequency sweep computed here instead of at audio rate
+        else if (r == 3) {
+          float sweepT = constrain((float)elapsed / bank.clapTauMs, 0.0f, 1.0f);
+          clapFreqCurrent = (bank.clapStartHz - sweepT * (bank.clapStartHz - bank.clapEndHz)) * drumPitch;
+          drumSinClap.setFreq(clapFreqCurrent);
+        }
       }
-      // Les autres drums (kick, hat, clap) utilisent des samples bamboo
     }
   }
 
