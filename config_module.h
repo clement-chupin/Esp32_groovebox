@@ -7,7 +7,7 @@
 #define SAFE_MODE 0  // 0 = normal, 1 = désactive touches/LEDs/écran
 
 // ==================== SAMPLE RATE ====================
-#define SAMPLE_RATE_HZ  16384  // meilleure qualite; demande plus de marge CPU
+#define SAMPLE_RATE_HZ  16384  // meilleure qualite audio avec optimisations DSP
 
 // ==================== MOZZI CONFIG ====================
 #define MOZZI_AUDIO_MODE MOZZI_OUTPUT_I2S_DAC

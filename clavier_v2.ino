@@ -429,6 +429,22 @@ static inline int16_t softClipInt16(int32_t x, int16_t knee) {
   return (int16_t)constrain(shaped, -32767, 32767);
 }
 
+static inline float fastSemitoneRatio(float semi) {
+  // Approximation of pow(2, semi/12) via table + linear interpolation.
+  // Much lighter than powf() in the audio loop.
+  static const float kSemiRatio[13] = {
+    1.000000f, 1.059463f, 1.122462f, 1.189207f,
+    1.259921f, 1.334840f, 1.414214f, 1.498307f,
+    1.587401f, 1.681793f, 1.781797f, 1.887749f,
+    2.000000f
+  };
+  if (semi <= 0.0f) return 1.0f;
+  if (semi >= 12.0f) return 2.0f;
+  int idx = (int)semi;
+  float frac = semi - (float)idx;
+  return kSemiRatio[idx] + (kSemiRatio[idx + 1] - kSemiRatio[idx]) * frac;
+}
+
 static int16_t applyEffectsChain(
   int16_t input,
   const bool fxMask[EFFECT_COUNT],
@@ -496,7 +512,7 @@ static int16_t applyEffectsChain(
     lfoSquareVal = lfoModSquareRef.next();
   }
 
-  for (int fx = 0; fx < EFFECT_COUNT; fx++) {
+  for (uint8_t fx = 0; fx < EFFECT_COUNT; fx++) {
     if (fx == 0 || !fxMask[fx]) continue;
     
     // Determine current P1 with LFO modulation if applicable
@@ -526,11 +542,12 @@ static int16_t applyEffectsChain(
         break;
       }
       case 2: {
-        float cutoff = 25.0f + ((float)fxAmt / 255.0f) * (600.0f + ((float)workP1 * 6.0f));
-        float rc = 1.0f / (6.28318f * cutoff);
-        float dt = 1.0f / (float)AUDIO_RATE;
-        float a = rc / (rc + dt);
-        int16_t y = (int16_t)(a * (hpfY1 + output - hpfX1));
+        // Integer HPF variant: less CPU than per-sample float divisions.
+        int cutoffCtl = 16 + ((int)fxAmt * 180) / 255 + ((int)workP1 * 48) / 255;
+        int aQ15 = 32700 - cutoffCtl * 110;
+        aQ15 = constrain(aQ15, 4000, 32000);
+        int32_t hpIn = (int32_t)hpfY1 + (int32_t)output - (int32_t)hpfX1;
+        int16_t y = (int16_t)constrain((hpIn * aQ15) >> 15, -32767, 32767);
         hpfX1 = output;
         hpfY1 = y;
         output = compress16(((int32_t)y * (128 + fxP2)) >> 7, 22000, 2);
@@ -620,8 +637,11 @@ static int16_t applyEffectsChain(
       }
       case 8: {
         int16_t dryIn = output;
+        // Poly-safe path for Acid when many notes are active.
+        int16_t preIn = (polyLoad >= 4) ? compress16(dryIn, 17000, 3) : dryIn;
         uint8_t cutoffBase = (uint8_t)(18 + ((uint16_t)fxAmt * 132U) / 255U);
         uint8_t resonance = (uint8_t)(160 + ((uint16_t)workP1 * 95U) / 255U);
+        if (polyLoad >= 4) resonance = (uint8_t)constrain((int)resonance - 26, 0, 255);
         int16_t lfo = fxLfoRef.next();
         int cutoffMod = (lfo * (16 + (fxAmt >> 3))) >> 7;
 
@@ -631,13 +651,21 @@ static int16_t applyEffectsChain(
         uint8_t cutoff = (uint8_t)constrain((int)cutoffBase + cutoffMod + accentBoost, 6, 210);
         uint8_t resonanceAccent = (uint8_t)constrain((int)resonance + (accent ? 12 : 0), 0, 255);
 
+        // Acid is sensitive to stepped coefficient updates; keep full-rate updates.
         acidFilterRef.setCutoffFreqAndResonance(cutoff, resonanceAccent);
 
         int driveMul = 2 + (fxP2 >> 5) + (accent ? 1 : 0);
-        int32_t driveIn = (int32_t)output * driveMul;
+        if (polyLoad >= 4) driveMul = 1 + (fxP2 >> 6);
+        int32_t driveIn = (int32_t)preIn * driveMul;
         int16_t filtered = (int16_t)acidFilterRef.next((int16_t)constrain(driveIn, -26000, 26000));
-        int16_t grit = softClipInt16((int32_t)filtered * (170 + (fxAmt >> 1)) / 128, (int16_t)(13000 - (fxAmt * 25)));
-        int16_t acidOut = (int16_t)constrain((((int32_t)filtered * 180) + ((int32_t)grit * 76)) >> 8, -32767, 32767);
+        int16_t acidOut;
+        if (polyLoad >= 4) {
+          // Simpler output stage: lower CPU and less risk of crackles.
+          acidOut = compress16(((int32_t)filtered * 176) >> 8, 20500, 2);
+        } else {
+          int16_t grit = softClipInt16((int32_t)filtered * (170 + (fxAmt >> 1)) / 128, (int16_t)(13000 - (fxAmt * 25)));
+          acidOut = (int16_t)constrain((((int32_t)filtered * 180) + ((int32_t)grit * 76)) >> 8, -32767, 32767);
+        }
         int16_t wetOut = compress16(((int32_t)acidOut * 182) >> 8, 22000, 2);
         output = (int16_t)constrain((((int32_t)dryIn * (255 - fxAmt)) + ((int32_t)wetOut * fxAmt)) >> 8, -32767, 32767);
         break;
@@ -645,15 +673,16 @@ static int16_t applyEffectsChain(
       case 9: {
         // Fuzz: abrasive punk character with asymmetric hard clipping.
         int16_t dryIn = output;
+        int16_t preIn = (polyLoad >= 4) ? compress16(dryIn, 17500, 3) : dryIn;
         int drive = 4 + ((int)workP1 * 14) / 255;
-        if (polyLoad >= 5) drive = 3 + ((int)workP1 * 8) / 255;
-        int32_t raw = (int32_t)output * drive;
+        if (polyLoad >= 4) drive = 3 + ((int)workP1 * 7) / 255;
+        int32_t raw = (int32_t)preIn * drive;
         int bias = ((int)fxP2 - 128) * 22;
-        raw += bias;
+        raw += (polyLoad >= 4) ? (bias >> 1) : bias;
 
         int32_t hiClip = 5200 + ((int32_t)(255 - fxP2) * 24);
         int32_t loClip = 8600 + ((int32_t)fxP2 * 18);
-        if (polyLoad >= 5) {
+        if (polyLoad >= 4) {
           hiClip += 1800;
           loClip += 1800;
         }
@@ -661,13 +690,15 @@ static int16_t applyEffectsChain(
         if (raw < -loClip) raw = -loClip;
 
         int16_t clipped = (int16_t)constrain(raw, -32767, 32767);
-        int16_t rasp = softClipInt16((int32_t)clipped * (210 + (workP1 >> 2)) / 128, 7600);
+        int16_t rasp = (polyLoad >= 4)
+          ? clipped
+          : softClipInt16((int32_t)clipped * (210 + (workP1 >> 2)) / 128, 7600);
         int punkBlend = 120 + ((int)fxP2 * 120) / 255;
         int16_t fuzzOut = (int16_t)constrain((((int32_t)clipped * (255 - punkBlend)) + ((int32_t)rasp * punkBlend)) >> 8, -32767, 32767);
         int16_t wetOut;
-        if (polyLoad >= 5) {
+        if (polyLoad >= 4) {
           // Skip expensive per-sample leveling when dense chords are active.
-          wetOut = compress16(((int32_t)fuzzOut * 192) >> 8, 21500, 2);
+          wetOut = compress16(((int32_t)fuzzOut * 184) >> 8, 20800, 2);
         } else {
           int16_t leveled = matchPerceivedLevelNoBoost(dryIn, fuzzOut);
           wetOut = (int16_t)((((int32_t)leveled) * 205) >> 8);
@@ -738,10 +769,10 @@ static int16_t applyEffectsChain(
       }
       case 15: {
         // Lightweight plate-like reverb from 3 decorrelated taps.
-        float sizeMul = 0.6f + ((float)workP1 / 255.0f) * 1.1f;
-        int d1 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.17f * sizeMul), 110, DELAY_BUFFER_SIZE - 1);
-        int d2 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.29f * sizeMul), 190, DELAY_BUFFER_SIZE - 1);
-        int d3 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.41f * sizeMul), 260, DELAY_BUFFER_SIZE - 1);
+        int sizeQ8 = 154 + ((int)workP1 * 282) / 255;  // 0.60..1.70 in Q8
+        int d1 = constrain((beatSamples * 17 * sizeQ8) / (100 * 256), 110, DELAY_BUFFER_SIZE - 1);
+        int d2 = constrain((beatSamples * 29 * sizeQ8) / (100 * 256), 190, DELAY_BUFFER_SIZE - 1);
+        int d3 = constrain((beatSamples * 41 * sizeQ8) / (100 * 256), 260, DELAY_BUFFER_SIZE - 1);
         int16_t t1 = delayBuf[(delayIdx - d1 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
         int16_t t2 = delayBuf[(delayIdx - d2 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
         int16_t t3 = delayBuf[(delayIdx - d3 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
@@ -921,12 +952,13 @@ AudioOutput updateAudio() {
   int32_t mixedSynthLive = 0;
   int32_t mixedSynthLoop = 0;
   int32_t mixedDrum = 0;
-  int synthActiveLive = 0;
-  int synthActiveLoop = 0;
-  int drumCount = 0;
+  uint8_t synthActiveLive = 0;
+  uint8_t synthActiveLoop = 0;
+  uint8_t drumCount = 0;
+  static uint8_t pitchEnvUpdateDiv[VOICE_COUNT] = {0};
 
   // ── Voix synth ──
-  for (int i = 0; i < VOICE_COUNT; i++) {
+  for (uint8_t i = 0; i < VOICE_COUNT; i++) {
     if (!voices[i].active) continue;
 
     uint8_t env = envelope[i].next();
@@ -946,14 +978,23 @@ AudioOutput updateAudio() {
 
     if (voices[i].envMode == ENV_MODE_PITCH && voicePitchEnvSemi[i] > 0.02f) {
       voicePitchEnvSemi[i] *= 0.9965f;
-      float f = voiceTargetFreq[i] * powf(2.0f, voicePitchEnvSemi[i] / 12.0f);
-      setVoiceFreq(i, f);
+      // Update pitch less often and avoid powf() in audio-rate loop.
+      if ((++pitchEnvUpdateDiv[i] & 0x01U) == 0U) {
+        float f = voiceTargetFreq[i] * fastSemitoneRatio(voicePitchEnvSemi[i]);
+        setVoiceFreq(i, f);
+      }
+      if (voicePitchEnvSemi[i] <= 0.03f) {
+        voicePitchEnvSemi[i] = 0.0f;
+        setVoiceFreq(i, voiceTargetFreq[i]);
+      }
+    } else {
+      pitchEnvUpdateDiv[i] = 0;
     }
 
     int16_t sample = 0;
     // Per-voice shape allows frozen loop timbre while changing live instrument.
-    int safeShape = constrain((int)voices[i].shape, 0, SHAPE_COUNT - 1);
-    int activeVoicesLoad = synthActiveLive + synthActiveLoop;
+    uint8_t safeShape = (uint8_t)constrain((int)voices[i].shape, 0, SHAPE_COUNT - 1);
+    uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
     bool heavyPolyLoad = activeVoicesLoad >= 4;
     switch (safeShape) {
       case 0: { // Square
@@ -1198,7 +1239,8 @@ AudioOutput updateAudio() {
   }
 
   // ── Drums avec samples ──
-  for (int r = 0; r < DRUM_ROWS; r++) {
+  const uint32_t nowMs = millis();
+  for (uint8_t r = 0; r < DRUM_ROWS; r++) {
     uint8_t denv = drumEnv[r].next();
     if (denv == 0) { 
       drumActive[r] = false;
@@ -1210,7 +1252,7 @@ AudioOutput updateAudio() {
     
     // Drums synthétiques (kick, snare, hat, clap)
     const DrumBank &bank = drumBanks[currentDrumBank];
-    unsigned long elapsed = millis() - drumTrigMs[r];
+    uint32_t elapsed = nowMs - drumTrigMs[r];
     
     if (isSoundDrumBank((uint8_t)currentDrumBank)) {
       ds = nextSoundDrumSample((uint8_t)r);
@@ -1300,12 +1342,13 @@ AudioOutput updateAudio() {
   if (!masterTrackFxEnabled[1]) liveDryBypass = compress16((int32_t)liveDryBypass + drumDry, 22000, 2);
 
   int16_t liveOut = liveInput;
+  uint8_t livePolyLoad = synthActiveLive;
   if (masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) {
     liveOut = applyEffectsChain(
       liveInput,
       effectEnabled,
       fxAmount,
-      (uint8_t)constrain(synthActiveLive, 0, 255),
+      livePolyLoad,
       lpf,
       resoEchoFilter,
       acidFilter,
@@ -1334,6 +1377,7 @@ AudioOutput updateAudio() {
 
   const bool* loopFxMask = loopTrackLocked ? lockedEffectMask : effectEnabled;
   uint8_t loopFxAmt = loopTrackLocked ? lockedFxAmount : fxAmount;
+  uint8_t loopPolyLoad = synthActiveLoop;
 
   int16_t loopOut = loopDry;
   if (masterTrackFxEnabled[2]) {
@@ -1341,7 +1385,7 @@ AudioOutput updateAudio() {
       loopDry,
       loopFxMask,
       loopFxAmt,
-      (uint8_t)constrain(synthActiveLoop, 0, 255),
+      loopPolyLoad,
       lockLpf,
       lockResoEchoFilter,
       lockAcidFilter,
