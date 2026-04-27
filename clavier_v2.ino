@@ -526,11 +526,22 @@ static int16_t applyEffectsChain(
         break;
       }
       case 2: {
-        float cutoff = 25.0f + ((float)fxAmt / 255.0f) * (600.0f + ((float)workP1 * 6.0f));
-        float rc = 1.0f / (6.28318f * cutoff);
-        float dt = 1.0f / (float)AUDIO_RATE;
-        float a = rc / (rc + dt);
-        int16_t y = (int16_t)(a * (hpfY1 + output - hpfX1));
+        // Cache HPF alpha: avoid float division on every sample.
+        // alpha = RC*Fs / (RC*Fs + 1) where RC = 1/(2pi*cutoff), Fs = AUDIO_RATE.
+        // Only recompute when fxAmt or workP1 changes (at most control-rate frequency).
+        static int32_t hpfAlphaQ15 = 31130;  // ~0.95 in Q15
+        static uint8_t lastHpfFxAmt = 255;
+        static uint8_t lastHpfWorkP1 = 255;
+        if (fxAmt != lastHpfFxAmt || workP1 != lastHpfWorkP1) {
+          float cutoff = 25.0f + ((float)fxAmt / 255.0f) * (600.0f + ((float)workP1 * 6.0f));
+          float rcFs = (float)AUDIO_RATE / (6.28318f * cutoff);  // RC*Fs
+          float alpha = rcFs / (rcFs + 1.0f);
+          hpfAlphaQ15 = (int32_t)(alpha * 32767.0f);
+          lastHpfFxAmt = fxAmt;
+          lastHpfWorkP1 = workP1;
+        }
+        int32_t diff = (int32_t)hpfY1 + (int32_t)output - (int32_t)hpfX1;
+        int16_t y = (int16_t)((hpfAlphaQ15 * diff) >> 15);
         hpfX1 = output;
         hpfY1 = y;
         output = compress16(((int32_t)y * (128 + fxP2)) >> 7, 22000, 2);
@@ -738,13 +749,22 @@ static int16_t applyEffectsChain(
       }
       case 15: {
         // Lightweight plate-like reverb from 3 decorrelated taps.
-        float sizeMul = 0.6f + ((float)workP1 / 255.0f) * 1.1f;
-        int d1 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.17f * sizeMul), 110, DELAY_BUFFER_SIZE - 1);
-        int d2 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.29f * sizeMul), 190, DELAY_BUFFER_SIZE - 1);
-        int d3 = constrain((int)((AUDIO_RATE * 60.0f) / (float)bpm * 0.41f * sizeMul), 260, DELAY_BUFFER_SIZE - 1);
-        int16_t t1 = delayBuf[(delayIdx - d1 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
-        int16_t t2 = delayBuf[(delayIdx - d2 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
-        int16_t t3 = delayBuf[(delayIdx - d3 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
+        // Cache tap distances: only recompute when BPM or workP1 changes.
+        static int reverbD1 = 200, reverbD2 = 300, reverbD3 = 400;
+        static uint16_t lastReverbBpm = 0;
+        static uint8_t lastReverbWorkP1 = 255;
+        if (bpmSafe != lastReverbBpm || workP1 != lastReverbWorkP1) {
+          float sizeMul = 0.6f + ((float)workP1 / 255.0f) * 1.1f;
+          float beatF = (float)(AUDIO_RATE * 60) / (float)bpmSafe;
+          reverbD1 = constrain((int)(beatF * 0.17f * sizeMul), 110, DELAY_BUFFER_SIZE - 1);
+          reverbD2 = constrain((int)(beatF * 0.29f * sizeMul), 190, DELAY_BUFFER_SIZE - 1);
+          reverbD3 = constrain((int)(beatF * 0.41f * sizeMul), 260, DELAY_BUFFER_SIZE - 1);
+          lastReverbBpm = bpmSafe;
+          lastReverbWorkP1 = workP1;
+        }
+        int16_t t1 = delayBuf[(delayIdx - reverbD1 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
+        int16_t t2 = delayBuf[(delayIdx - reverbD2 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
+        int16_t t3 = delayBuf[(delayIdx - reverbD3 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
 
         int tone = 40 + ((int)fxP2 * 140) / 255;
         int32_t tail = ((int32_t)t1 * (160 - tone) + (int32_t)t2 * 86 + (int32_t)t3 * tone) >> 8;
@@ -944,11 +964,8 @@ AudioOutput updateAudio() {
       voiceHoldGain[i] *= 0.9985f;
     }
 
-    if (voices[i].envMode == ENV_MODE_PITCH && voicePitchEnvSemi[i] > 0.02f) {
-      voicePitchEnvSemi[i] *= 0.9965f;
-      float f = voiceTargetFreq[i] * powf(2.0f, voicePitchEnvSemi[i] / 12.0f);
-      setVoiceFreq(i, f);
-    }
+    // Pitch envelope is handled in updateSynthControl at control rate to avoid
+    // the expensive powf() + setVoiceFreq() call on every audio sample.
 
     int16_t sample = 0;
     // Per-voice shape allows frozen loop timbre while changing live instrument.
@@ -1066,7 +1083,8 @@ AudioOutput updateAudio() {
         int32_t m = (int32_t)oscCos[i].next() * 116
                   + (int32_t)oscSin[i].next() * 76
                   + (int32_t)oscTri[i].next() * 44;
-        sample = (int16_t)(((m * 15) / 10) >> 8);
+        // (m * 15) / 10 / 256 = m * 1.5 / 256 = (m * 3) >> 9  (exact, no division needed)
+        sample = (int16_t)((m * 3) >> 9);
         break;
       }
       case 16: { // DigiPlk (FM percussif court)
@@ -1098,7 +1116,9 @@ AudioOutput updateAudio() {
           int32_t m = (int32_t)fm * 102
                     + (int32_t)oscCheby[i].next() * 64
                     + (int32_t)oscSaw2[i].next() * 34;
-          sample = (int16_t)(((m * 14) / 10) >> 8);
+          // (m * 14) / 10 / 256 = m * 7 / 1280 = m * 0.005469.
+          // Using (m * 45) >> 13 = m * 45 / 8192 = m * 0.005493 (<0.37% error, inaudible).
+          sample = (int16_t)((m * 45) >> 13);
         }
         break;
       }
@@ -1209,14 +1229,15 @@ AudioOutput updateAudio() {
     int16_t ds = 0;
     
     // Drums synthétiques (kick, snare, hat, clap)
+    // Frequency sweeps are pre-computed in updateDrumsControl (control rate) to avoid
+    // costly float arithmetic here in the audio ISR.
     const DrumBank &bank = drumBanks[currentDrumBank];
-    unsigned long elapsed = millis() - drumTrigMs[r];
     
     if (isSoundDrumBank((uint8_t)currentDrumBank)) {
       ds = nextSoundDrumSample((uint8_t)r);
     } else {
       switch (r) {
-        case 0: { // Kick - utilise sample burroughs1 en banques Rock/Metal, sinon synthétique
+        case 0: { // Kick - freq sweep set in updateDrumsControl
 #if ENABLE_BURROUGHS_KICK_SAMPLE
           if (currentDrumBank == 3 || currentDrumBank == 4) {
             // Rock/Metal: kick en sample burroughs1 (démarré dans triggerDrum)
@@ -1225,20 +1246,13 @@ AudioOutput updateAudio() {
             }
           } else {
 #endif
-            // Autres banques: kick synthétique
-            float sweepT = constrain((float)elapsed / bank.kickTauMs, 0.0f, 1.0f);
-            float kf = (bank.kickStartHz - sweepT * (bank.kickStartHz - bank.kickEndHz)) * drumPitch;
-            drumSinKick.setFreq(kf);
             ds = drumSinKick.next();
 #if ENABLE_BURROUGHS_KICK_SAMPLE
           }
 #endif
           break;
         }
-        case 1: { // Snare
-          float sweepT = constrain((float)elapsed / bank.snareTauMs, 0.0f, 1.0f);
-          float sf = (bank.snareStartHz - sweepT * (bank.snareStartHz - bank.snareEndHz)) * drumPitch;
-          drumSinSnare.setFreq(sf);
+        case 1: { // Snare - freq sweep set in updateDrumsControl
           int16_t tone = drumSinSnare.next();
           int8_t noise = nextNoise();
           ds = (int16_t)(((int32_t)tone * (255 - bank.snareNoise) + (int32_t)noise * bank.snareNoise) >> 8);
@@ -1249,10 +1263,7 @@ AudioOutput updateAudio() {
           ds = (int16_t)(((int32_t)n * bank.hhNoise) >> 7);
           break;
         }
-        case 3: { // Clap
-          float sweepT = constrain((float)elapsed / bank.clapTauMs, 0.0f, 1.0f);
-          float cf = (bank.clapStartHz - sweepT * (bank.clapStartHz - bank.clapEndHz)) * drumPitch;
-          drumSinClap.setFreq(cf);
+        case 3: { // Clap - freq sweep set in updateDrumsControl
           int16_t tone = drumSinClap.next();
           int8_t noise = nextNoise();
           ds = (int16_t)(((int32_t)tone * (255 - bank.clapNoise) + (int32_t)noise * bank.clapNoise) >> 8);
@@ -1275,14 +1286,27 @@ AudioOutput updateAudio() {
     synthOutLoop = (synthOutLoop * 2) / synthActiveLoop;
   }
   int32_t drumOut = (drumCount > 0) ? (mixedDrum / drumCount) : 0;
-  float vscaleForDrumComp = masterVolume / 16000.0f;
-  if (vscaleForDrumComp < 1.0f) vscaleForDrumComp = 1.0f;
-  if (vscaleForDrumComp > 10.0f) vscaleForDrumComp = 10.0f;
+
+  // Cache drum compensation factor: only recompute when inputs change (control rate).
+  // This avoids a float division on every audio sample.
+  static int32_t drumCompQ8 = 256;
+  static float lastDrumCompVol = -1.0f;
+  static float lastDrumGlobalGain = -1.0f;
+  static float lastDrumAmplitude = -1.0f;
+  if (masterVolume != lastDrumCompVol || drumGlobalGain != lastDrumGlobalGain || drumAmplitude != lastDrumAmplitude) {
+    float vs = masterVolume / 16000.0f;
+    if (vs < 1.0f) vs = 1.0f;
+    if (vs > 10.0f) vs = 10.0f;
+    float comp = (drumGlobalGain / (0.80f + 0.20f * vs)) * drumAmplitude;
+    drumCompQ8 = (int32_t)(comp * 256.0f);
+    lastDrumCompVol = masterVolume;
+    lastDrumGlobalGain = drumGlobalGain;
+    lastDrumAmplitude = drumAmplitude;
+  }
 
   int32_t drumPost = ((drumOut * drumMixAmount) >> 8);
   // As master volume rises, compensate drum gain so drums do not explode in level.
-  float drumComp = (drumGlobalGain / (0.80f + 0.20f * vscaleForDrumComp)) * drumAmplitude;
-  drumPost = (int32_t)((float)drumPost * drumComp);
+  drumPost = (drumPost * drumCompQ8) >> 8;
   if (drumPost > 28000) drumPost = 28000;
   if (drumPost < -28000) drumPost = -28000;
 
@@ -1370,9 +1394,16 @@ AudioOutput updateAudio() {
   int16_t output = compress16((int32_t)liveOut + (int32_t)loopOut, 22000, 2);
 
   // ── Volume + saturation sécurisée ──
-  float vscale = masterVolume / 16000.0f;
-  if (vscale > 10.0f) vscale = 10.0f;
-  int32_t driven = (int32_t)((float)output * vscale * 1.5f);
+  // Cache vscale * 1.5 as Q8 integer; masterVolume changes at most at control rate.
+  static int32_t vscaleQ8 = 384;  // 1.5 * 256
+  static float lastMasterVolumeCache = -1.0f;
+  if (masterVolume != lastMasterVolumeCache) {
+    float vs = masterVolume / 16000.0f;
+    if (vs > 10.0f) vs = 10.0f;
+    vscaleQ8 = (int32_t)(vs * 1.5f * 256.0f);
+    lastMasterVolumeCache = masterVolume;
+  }
+  int32_t driven = ((int32_t)output * vscaleQ8) >> 8;
   int32_t absDriven = driven < 0 ? -driven : driven;
   int32_t final32 = (driven * (32767 + (absDriven >> 2))) / (32767 + (absDriven >> 1));
   if (final32 >  32767) final32 =  32767;

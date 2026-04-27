@@ -16,6 +16,31 @@
 
 extern bool loopTrackLocked;
 unsigned long voiceNoteOnMs[VOICE_COUNT] = {0};
+
+// Pre-computed semitone frequency ratios: pow(2, n/12) for n = 0..48
+// Avoids expensive powf() calls during note-on and modulation.
+static const float kSemiRatio[49] = {
+     1.000000f,  1.059463f,  1.122462f,  1.189207f,  1.259921f,
+     1.334840f,  1.414214f,  1.498307f,  1.587401f,  1.681793f,
+     1.781797f,  1.887749f,  2.000000f,  2.118926f,  2.244924f,
+     2.378414f,  2.519842f,  2.669680f,  2.828427f,  2.996614f,
+     3.174802f,  3.363586f,  3.563595f,  3.775501f,  4.000000f,
+     4.237852f,  4.489848f,  4.756828f,  5.039684f,  5.339360f,
+     5.656854f,  5.993229f,  6.349604f,  6.727171f,  7.127190f,
+     7.551003f,  8.000000f,  8.475705f,  8.979696f,  9.513657f,
+    10.079369f, 10.678720f, 11.313708f, 11.986459f, 12.699208f,
+    13.454342f, 14.254381f, 15.102005f, 16.000000f
+};
+
+// Linear interpolation of semitone ratio for fractional semitone values in [0, 8).
+// Used by the pitch envelope which starts at 7 semitones and decays to 0.
+static inline float semiToRatioFine(float semi) {
+    int idx = (int)semi;
+    if (idx < 0) return 1.0f;
+    if (idx >= 8) return kSemiRatio[8];
+    float frac = semi - (float)idx;
+    return kSemiRatio[idx] + frac * (kSemiRatio[idx + 1] - kSemiRatio[idx]);
+}
 static float voiceSlideStartFreq[VOICE_COUNT] = {0.0f};
 static float voiceSlideProgress[VOICE_COUNT] = {1.0f};
 
@@ -117,7 +142,7 @@ static void retargetSlideVoiceFromHeldStack(bool loopVoice) {
   voiceTargetFreq[voiceIdx] = held.playFreq;
 #if ENABLE_SOUND_SYNTH_BANKS
   if (isSoundSynthShape(held.shape)) {
-    voiceSoundSamplePos[voiceIdx] = 0.0f;
+    voiceSoundSamplePosQ16[voiceIdx] = 0;
   }
 #endif
   voiceNoteOnMs[voiceIdx] = millis();
@@ -135,7 +160,7 @@ static const SoundSynthSampleDesc kSoundSynthBanks[SOUND_SYNTH_BANK_COUNT] = {
   {SYNTH3, (uint32_t)(sizeof(SYNTH3) / sizeof(SYNTH3[0]))}
 };
 
-static float voiceSoundSamplePos[VOICE_COUNT] = {0.0f};
+static uint32_t voiceSoundSamplePosQ16[VOICE_COUNT] = {0};
 
 static inline bool isSoundSynthShape(uint8_t shape) {
   return shape >= SOUND_SYNTH_SHAPE_FIRST && shape < SHAPE_COUNT;
@@ -157,23 +182,27 @@ int16_t nextSoundInstrumentSample(uint8_t voiceIndex, uint8_t shapeIndex) {
   const SoundSynthSampleDesc& desc = kSoundSynthBanks[bank];
   if (desc.len < 2 || desc.data == nullptr) return 0;
 
-  float pos = voiceSoundSamplePos[voiceIndex];
-  while (pos >= (float)desc.len) pos -= (float)desc.len;
-  while (pos < 0.0f) pos += (float)desc.len;
+  // Q16 fixed-point position: upper 16 bits = integer index, lower 16 bits = fraction.
+  // Using integer interpolation avoids float division and float multiply per sample.
+  uint32_t posQ16 = voiceSoundSamplePosQ16[voiceIndex];
+  uint32_t lenQ16 = (uint32_t)desc.len << 16;
+  while (posQ16 >= lenQ16) posQ16 -= lenQ16;
 
-  uint32_t idx = (uint32_t)pos;
+  uint32_t idx     = posQ16 >> 16;
   uint32_t idxNext = (idx + 1U < desc.len) ? (idx + 1U) : 0U;
-  float frac = pos - (float)idx;
+  // Q8 fraction (0..255) is safe: max diff for int16_t data is ~65535, 65535*255 < INT32_MAX.
+  int32_t frac8    = (int32_t)((posQ16 >> 8) & 0xFF);
 
   int32_t a = (int32_t)desc.data[idx];
   int32_t b = (int32_t)desc.data[idxNext];
-  int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
+  int32_t interp = a + (((b - a) * frac8) >> 8);
 
-  float inc = (voiceCurFreq[voiceIndex] * (float)desc.len) / (float)AUDIO_RATE;
-  if (inc < 0.05f) inc = 0.05f;
-  pos += inc;
-  while (pos >= (float)desc.len) pos -= (float)desc.len;
-  voiceSoundSamplePos[voiceIndex] = pos;
+  // Compute increment from desired frequency; one float div happens only here.
+  float incF = (voiceCurFreq[voiceIndex] * (float)desc.len) * (1.0f / (float)AUDIO_RATE);
+  if (incF < 0.05f) incF = 0.05f;
+  posQ16 += (uint32_t)(incF * 65536.0f);
+  while (posQ16 >= lenQ16) posQ16 -= lenQ16;
+  voiceSoundSamplePosQ16[voiceIndex] = posQ16;
 
   return (int16_t)(interp >> 8);
 #else
@@ -201,7 +230,7 @@ void initSynth() {
     voices[i] = {false, false, false, 0, 0, ENV_MODE_NORMAL, 440.0f};
     setVoiceFreq(i, 440.0f);
   #if ENABLE_SOUND_SYNTH_BANKS
-    voiceSoundSamplePos[i] = 0.0f;
+    voiceSoundSamplePosQ16[i] = 0;
   #endif
     voiceModPhase[i] = 0.0f;
     voiceModAmp[i] = 1.0f;
@@ -228,7 +257,7 @@ float keyToFreqColumnOrder(int key) {
   int row = key / COLS;
   int col = key % COLS;
   int semitone = col * 4 + row;
-  float hz = rootHz * powf(2.0f, (float)semitone / 12.0f);
+  float hz = rootHz * kSemiRatio[constrain(semitone, 0, 48)];
   return applyOctave(hz, octaveShift);
 }
 
@@ -236,7 +265,7 @@ float keyToFreqPentatonic(int col) {
   static const int8_t pentatonic[COLS] = {0, 3, 5, 7, 10, 12, 15, 17};
   const float rootHz = 110.0f;
   int idx = constrain(col, 0, COLS - 1);
-  float hz = rootHz * powf(2.0f, (float)pentatonic[idx] / 12.0f);
+  float hz = rootHz * kSemiRatio[constrain((int)pentatonic[idx], 0, 48)];
   return applyOctave(hz, octaveShift);
 }
 
@@ -247,7 +276,7 @@ float keyToFreqScale4x4(int row, int col) {
   int idx = rr * 4 + cc;
   float rootHz = 110.0f;
   int8_t semi = scaleMap[currentScaleIndex % 4][idx];
-  float hz = rootHz * powf(2.0f, (float)semi / 12.0f);
+  float hz = rootHz * kSemiRatio[constrain((int)semi, 0, 48)];
   return applyOctave(hz, octaveShift);
 }
 
@@ -255,7 +284,7 @@ float keyToFreqPentatonic4x4(int row, int col) {
   static const int8_t pent16[16] = {0,3,5,7, 10,12,15,17, 19,22,24,27, 29,31,34,36};
   int idx = constrain(row, 0, 3) * 4 + constrain(col, 0, 3);
   float rootHz = 110.0f;
-  float hz = rootHz * powf(2.0f, (float)pent16[idx] / 12.0f);
+  float hz = rootHz * kSemiRatio[constrain((int)pent16[idx], 0, 48)];
   return applyOctave(hz, octaveShift);
 }
 
@@ -346,7 +375,7 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
       voiceTargetFreq[slideVoice] = playFreq;
 #if ENABLE_SOUND_SYNTH_BANKS
       if (isSoundSynthShape(safeShape)) {
-        voiceSoundSamplePos[slideVoice] = 0.0f;
+        voiceSoundSamplePosQ16[slideVoice] = 0;
       }
 #endif
       if (!legato) {
@@ -368,7 +397,7 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
       setVoicePlayFreq(i, playFreq);
 #if ENABLE_SOUND_SYNTH_BANKS
       if (isSoundSynthShape(safeShape)) {
-        voiceSoundSamplePos[i] = 0.0f;
+        voiceSoundSamplePosQ16[i] = 0;
       }
 #endif
       voicePitchEnvSemi[i] = (safeEnv == ENV_MODE_PITCH) ? 7.0f : 0.0f;
@@ -433,7 +462,7 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
   setVoicePlayFreq(idx, playFreq);
 #if ENABLE_SOUND_SYNTH_BANKS
   if (isSoundSynthShape(safeShape)) {
-    voiceSoundSamplePos[idx] = 0.0f;
+    voiceSoundSamplePosQ16[idx] = 0;
   }
 #endif
   voicePitchEnvSemi[idx] = (safeEnv == ENV_MODE_PITCH) ? 7.0f : 0.0f;
@@ -512,7 +541,8 @@ void updateSynthControl() {
         float play = base;
         voices[i].baseFreq = base;
         if (cachedArpIndex > 0 && voices[i].gate) {
-          play *= powf(2.0f, (float)currentArpSemitone() / 12.0f);
+          int8_t arpSemi = currentArpSemitone();
+          play *= kSemiRatio[constrain((int)arpSemi, 0, 48)];
         }
 
         // Keep internal voice state aligned so later slide/pitch/vibrato keeps the new octave.
@@ -532,7 +562,7 @@ void updateSynthControl() {
     if (voices[i].envMode == ENV_MODE_PITCH && voicePitchEnvSemi[i] > 0.0f) {
       voicePitchEnvSemi[i] *= 0.985f;
       if (voicePitchEnvSemi[i] < 0.01f) voicePitchEnvSemi[i] = 0.0f;
-      float pitchMul = powf(2.0f, voicePitchEnvSemi[i] / 12.0f);
+      float pitchMul = semiToRatioFine(voicePitchEnvSemi[i]);
       setVoiceFreq(i, voiceCurFreq[i] * pitchMul);
     }
     
@@ -572,7 +602,11 @@ void updateSynthControl() {
     if (voiceModPhase[i] > 6.28318f) voiceModPhase[i] -= 6.28318f;
 
     float depthSemi = 0.04f + 0.015f * (float)(voices[i].shape % 5);
-    float vibMul = powf(2.0f, (sinf(voiceModPhase[i]) * depthSemi) / 12.0f);
+    // For tiny exponents (max ~0.00958 = 0.115/12), 2^x ≈ 1 + x*ln(2).
+    // Maximum relative error at x=0.00958: |2^x - (1+x*ln2)| / 2^x < 0.003%.
+    static const float kLn2 = 0.693147f;  // natural log of 2
+    float exponent = (sinf(voiceModPhase[i]) * depthSemi) * (1.0f / 12.0f);
+    float vibMul = 1.0f + exponent * kLn2;
     voiceModAmp[i] = 0.92f + 0.08f * (0.5f + 0.5f * sinf(voiceModPhase[i] * 0.7f + (float)i * 0.3f));
 
     float modFreq = voiceCurFreq[i] * vibMul;
