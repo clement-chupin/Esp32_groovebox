@@ -89,7 +89,7 @@ constexpr int POT_BPM_DELTA_FAST = 64;
 
 // ==================== FORMES D'ONDES ====================
 extern const char* shapeNames[];
-#define BASE_SHAPE_COUNT 21
+#define BASE_SHAPE_COUNT 25
 #define ENABLE_SAMPLE_INSTRUMENT_ENGINE 0
 #define ENABLE_SOUND_SYNTH_BANKS 0
 #define ENABLE_BURROUGHS_KICK_SAMPLE 0
@@ -111,7 +111,7 @@ struct EnvPreset {
 };
 
 extern const EnvPreset envPresets[];
-#define ENV_PRESET_COUNT 8
+#define ENV_PRESET_COUNT 9
 
 enum EnvMode : uint8_t {
   ENV_MODE_NORMAL = 0,
@@ -121,7 +121,8 @@ enum EnvMode : uint8_t {
   ENV_MODE_PIANO  = 4,
   ENV_MODE_FADE   = 5,
   ENV_MODE_PITCH  = 6,
-  ENV_MODE_SLIDE  = 7
+  ENV_MODE_SLIDE  = 7,
+  ENV_MODE_PIANO2 = 8
 };
 
 // ==================== EFFETS ====================

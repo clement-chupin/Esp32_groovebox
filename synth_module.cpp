@@ -227,7 +227,24 @@ float keyToFreqColumnOrder(int key) {
   const float rootHz = 261.63f; // C4
   int row = key / COLS;
   int col = key % COLS;
-  int semitone = col * 4 + row;
+  int noteIndex = col * 4 + row;
+  if (noteIndex < 0) noteIndex = 0;
+
+  extern uint8_t currentScaleIndex;
+  uint8_t scale = (uint8_t)(currentScaleIndex % 4);
+
+  int semitone = noteIndex;
+  if (scale == 1) {
+    static const uint8_t major[7] = {0, 2, 4, 5, 7, 9, 11};
+    semitone = (noteIndex / 7) * 12 + major[noteIndex % 7];
+  } else if (scale == 2) {
+    static const uint8_t minor[7] = {0, 2, 3, 5, 7, 8, 10};
+    semitone = (noteIndex / 7) * 12 + minor[noteIndex % 7];
+  } else if (scale == 3) {
+    static const uint8_t penta[5] = {0, 2, 4, 7, 9};
+    semitone = (noteIndex / 5) * 12 + penta[noteIndex % 5];
+  }
+
   float hz = rootHz * powf(2.0f, (float)semitone / 12.0f);
   return applyOctave(hz, octaveShift);
 }
@@ -262,11 +279,20 @@ float keyToFreqPentatonic4x4(int row, int col) {
 // ==================== GESTION DES ENVELOPPES ====================
 void applyEnvPreset(int i, uint8_t envMode) {
   uint8_t idx = (uint8_t)constrain((int)envMode, 0, ENV_PRESET_COUNT - 1);
+  uint16_t sustainMs = 600000;
+  switch (idx) {
+    // Natural auto-decay to zero only for Pluck, Pad and Piano variants.
+    case ENV_MODE_PLUCK: sustainMs = 240; break;
+    case ENV_MODE_PAD:   sustainMs = 2600; break;
+    case ENV_MODE_PIANO: sustainMs = 520; break;
+    case ENV_MODE_PIANO2: sustainMs = 1200; break;
+    default:             sustainMs = 600000; break;
+  }
   envelope[i].setADLevels(255, envPresets[idx].sustainLevel);
   envelope[i].setTimes(
     envPresets[idx].attackMs,
     envPresets[idx].decayMs,
-    600000,
+    sustainMs,
     envPresets[idx].releaseMs
   );
 }

@@ -116,6 +116,7 @@ enum SelectionCategory : uint8_t {
   SEL_MODE,
   SEL_ARP,
   SEL_BPM,
+  SEL_SCALE,
   SEL_ENV,
   SEL_INSTRUMENT,
   SEL_EFFECT,
@@ -144,7 +145,8 @@ static SelectionCategory selectionCategoryForKey(int key) {
       return SEL_EFFECT;
     case SEL_PAGE_ARP_ENV:
       if (row == 0 && col >= 4) return SEL_ARP;
-      if (row == 1 && col < 5) return SEL_BPM;
+      if (row == 1 && col < 4) return SEL_BPM;
+      if (row == 1 && col >= 4) return SEL_SCALE;
       return (row >= 2) ? SEL_ENV : SEL_NONE;
     default:
       return SEL_NONE;
@@ -176,8 +178,9 @@ static int selectionSlotForKey(int key) {
     }
     case SEL_PAGE_ARP_ENV:
       if (row == 0 && col >= 4) return flat - 4;
-      if (row == 1 && col < 5) return col;
-      return (flat - (2 * COLS));            // ENV slots 0..15
+      if (row == 1 && col < 4) return col;         // BPM slots
+      if (row == 1 && col >= 4) return col - 4;    // SCALE slots 0..3
+      return (flat - (2 * COLS));                  // ENV slots 0..15
     default:
       return -1;
   }
@@ -427,11 +430,15 @@ static void applySelectionChoice(uint8_t key) {
     case SEL_BPM:
       if (slot == 0) setBpmExternal((uint16_t)max((int)BPM_MIN, (int)bpm - 5));
       else if (slot == 1) setBpmExternal((uint16_t)max((int)BPM_MIN, (int)bpm - 1));
-      else if (slot == 2) setBpmExternal(BPM_DEFAULT);
-      else if (slot == 3) setBpmExternal((uint16_t)min((int)BPM_MAX, (int)bpm + 1));
-      else if (slot == 4) setBpmExternal((uint16_t)min((int)BPM_MAX, (int)bpm + 5));
+      else if (slot == 2) setBpmExternal((uint16_t)min((int)BPM_MAX, (int)bpm + 1));
+      else if (slot == 3) setBpmExternal((uint16_t)min((int)BPM_MAX, (int)bpm + 5));
       resetDrumTransport(true);
       syncPerformanceClockToNow();
+      break;
+    case SEL_SCALE:
+      if (slot < 4) {
+        currentScaleIndex = (uint8_t)slot;
+      }
       break;
     case SEL_ENV:
       if (slot < ENV_PRESET_COUNT) {
@@ -653,6 +660,16 @@ void handleMasterMode() {
 }
 
 // ==================== INSTRUMENT MODE ====================
+static bool liveKeyUsesOneShotEnv(uint8_t key) {
+  for (int i = 0; i < VOICE_COUNT; i++) {
+    if (!voices[i].active || voices[i].loopVoice) continue;
+    if (voices[i].key != key) continue;
+    uint8_t env = voices[i].envMode;
+    if (env == ENV_MODE_PLUCK || env == ENV_MODE_PAD || env == ENV_MODE_PIANO) return true;
+  }
+  return false;
+}
+
 void handleInstrumentMode() {
   for (int key = 0; key < MAIN_BUTTONS; key++) {
     if (justPressed[key]) {
@@ -667,7 +684,9 @@ void handleInstrumentMode() {
       }
     }
     if (justReleased[key]) {
-      noteOff(key);
+      if (!liveKeyUsesOneShotEnv((uint8_t)key)) {
+        noteOff(key);
+      }
       if (noteRecordArmed) {
         recordLoopNoteOff((uint8_t)key);
       }
@@ -784,7 +803,7 @@ void processInputActions() {
     // pour éviter les notes tenues indéfiniment.
     if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
       for (int key = 0; key < MAIN_BUTTONS; key++) {
-        if (justReleased[key]) noteOff((uint8_t)key);
+        if (justReleased[key] && !liveKeyUsesOneShotEnv((uint8_t)key)) noteOff((uint8_t)key);
       }
     }
 

@@ -13,7 +13,7 @@ const char* potNames[POT_COUNT] = {
 // ==================== WAVETABLE NAMES ====================
 const char* shapeNames[] = {
   "Sqr", "Tri", "Gtr", "Bass", "Vln", "Lead", "Acid", "Hyb", "SupSaw", "Bell", "Smpl", "VoxPad", "Brass", "DigiFM",
-  "Saw", "NeoVox", "DigiPlk", "FMGlass", "Choir", "TalkBox", "VoxSwp"
+  "Saw", "NeoVox", "DigiPlk", "FMGlass", "Choir", "TalkBox", "VoxSwp", "Pno", "Silk", "Mist", "Halo"
 #if ENABLE_SOUND_SYNTH_BANKS
   , "SND1", "SND2", "SND3"
 #endif
@@ -21,14 +21,15 @@ const char* shapeNames[] = {
 
 // ==================== ENVELOPE PRESETS ====================
 const EnvPreset envPresets[] = {
-  {"Normal",   8,  60, 80,  30},
-  {"Fast",    10, 100, 90,  60},
-  {"Pluck",   20, 150, 120, 100},
-  {"Pad",     50, 250, 200, 150},
-  {"Piano",  100, 400, 350, 250},
-  {"Fade",     5, 500, 500,  50},
-  {"Pitch",   15,  80, 100,  40},
-  {"Slide",    3,  40,  60,  20}
+  {"Normal",   7, 100, 74, 110},
+  {"Fast",     2,  55, 58,  70},
+  {"Pluck",    1, 180, 28, 200},
+  {"Pad",     95, 620, 72, 520},
+  {"Piano",   18, 920, 136, 1180},
+  {"Fade",    18, 700, 130,  70},
+  {"Pitch",    5, 120, 52, 120},
+  {"Slide",    3,  60, 72,  70},
+  {"Piano2",  14, 820, 116, 220}
 };
 
 // ==================== EFFETS ====================
@@ -71,13 +72,13 @@ const DrumBank drumBanks[] = {
 };
 
 // ==================== SCALES ====================
-const char* scaleNames[] = {"PentMaj", "Minor", "Dorian", "Blues"};
+const char* scaleNames[] = {"Chrom", "Major", "Minor", "Penta"};
 
 const int8_t scaleMap[4][16] = {
-  {0,2,4,7, 9,12,14,16, 19,21,24,26, 28,31,33,36},
-  {0,2,3,5, 7,8,10,12, 14,15,17,19, 20,22,24,27},
-  {0,2,3,5, 7,9,10,12, 14,15,17,19, 21,22,24,26},
-  {0,3,5,6, 7,10,12,15, 17,18,19,22, 24,27,29,30}
+  {0,1,2,3, 4,5,6,7, 8,9,10,11, 12,13,14,15},
+  {0,2,4,5, 7,9,11,12, 14,16,17,19, 21,23,24,26},
+  {0,2,3,5, 7,8,10,12, 14,15,17,19, 20,22,24,26},
+  {0,2,4,7, 9,12,14,16, 19,21,24,26, 28,31,33,36}
 };
 
 // ==================== DRUM SHOW PRESETS ====================

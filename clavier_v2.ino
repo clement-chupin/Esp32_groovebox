@@ -963,8 +963,10 @@ AudioOutput updateAudio() {
 
     uint8_t env = envelope[i].next();
 
-    // Déactiver quand enveloppe éteinte + gate relâché
-    if (env == 0 && !voices[i].gate) {
+    // Déactiver quand enveloppe éteinte: gate relâché, ou mode one-shot terminé.
+    bool oneShotEnv = (voices[i].envMode == ENV_MODE_PLUCK || voices[i].envMode == ENV_MODE_PAD || voices[i].envMode == ENV_MODE_PIANO);
+    if (env == 0 && (!voices[i].gate || oneShotEnv)) {
+      voices[i].gate = false;
       voices[i].active = false;
       continue;
     }
@@ -1216,6 +1218,98 @@ AudioOutput updateAudio() {
         sample = softClipInt16(m >> 8, 11500);
         break;
       }
+      case 21: { // Pno (timbre piano-like: corps doux + attaque brillante qui retombe vite)
+        if (heavyPolyLoad) {
+          int32_t m = (int32_t)oscTri[i].next() * 112
+                    + (int32_t)oscSin[i].next() * 92
+                    + (int32_t)oscCheby[i].next() * 28;
+          sample = softClipInt16(m >> 8, 10800);
+          break;
+        }
+        int16_t s = oscSin[i].next();
+        int16_t t = oscTri[i].next();
+        int16_t c = oscCos[i].next();
+        int16_t bright = oscCheby[i].next();
+        int16_t saw = oscSaw2[i].next();
+
+        int16_t body = (int16_t)(((int32_t)s * 132 + (int32_t)t * 96 + (int32_t)c * 24) >> 8);
+        int16_t hammer = (int16_t)(((int32_t)bright * 108 + (int32_t)saw * 68) >> 8);
+        int hammerMix = 42 + (((int)env * 118) >> 8);
+
+        int32_t m = (int32_t)body * 208 + (int32_t)hammer * hammerMix;
+        sample = softClipInt16(m >> 8, 10400);
+        break;
+      }
+      case 22: { // Silk (ultra doux, vocal-like, sans attaque dure)
+        if (heavyPolyLoad) {
+          int32_t m = (int32_t)oscSin[i].next() * 118
+                    + (int32_t)oscTri[i].next() * 86
+                    + (int32_t)oscCos[i].next() * 52;
+          sample = softClipInt16(m >> 8, 11200);
+          break;
+        }
+        int16_t s = oscSin[i].next();
+        int16_t t = oscTri[i].next();
+        int16_t c = oscCos[i].next();
+        int16_t airy = (int16_t)(((int32_t)oscSaw2[i].next() + (int32_t)oscCheby[i].next()) >> 1);
+        int16_t form = (int16_t)(((int32_t)s * (int32_t)c) >> 7);
+        int16_t soft2 = (int16_t)(((int32_t)t * (int32_t)t) >> 8);
+        int32_t m = (int32_t)s * 102
+                  + (int32_t)t * 76
+                  + (int32_t)c * 54
+                  + (int32_t)airy * 20
+                  + (int32_t)form * 44
+                  + (int32_t)soft2 * 38;
+        sample = softClipInt16(m >> 8, 10600);
+        break;
+      }
+      case 23: { // Mist (pad vaporeux, fondu et large)
+        if (heavyPolyLoad) {
+          int32_t m = (int32_t)oscTri[i].next() * 112
+                    + (int32_t)oscSaw2[i].next() * 58
+                    + (int32_t)oscSin[i].next() * 62;
+          sample = softClipInt16(m >> 8, 11000);
+          break;
+        }
+        int16_t s = oscSin[i].next();
+        int16_t t = oscTri[i].next();
+        int16_t c = oscCos[i].next();
+        int16_t shimmer = oscCheby[i].next();
+        int16_t drift = oscSaw2[i].next();
+        int16_t gran = (int16_t)(((int32_t)drift * (int32_t)shimmer) >> 7);
+        int16_t sub = (int16_t)(((int32_t)s * (int32_t)t) >> 8);
+        int16_t cloud = (int16_t)(((int32_t)s * 150 + (int32_t)t * 94 + (int32_t)c * 44) >> 8);
+        int16_t haze = (int16_t)(((int32_t)shimmer * 68 + (int32_t)drift * 52) >> 8);
+        int32_t m = (int32_t)cloud * 184
+                  + (int32_t)haze * 66
+                  + (int32_t)gran * 52
+                  + (int32_t)sub * 42;
+        sample = softClipInt16(m >> 8, 10400);
+        break;
+      }
+      case 24: { // Halo (choir brillant, doux mais present)
+        if (heavyPolyLoad) {
+          int32_t m = (int32_t)oscCos[i].next() * 116
+                    + (int32_t)oscSin[i].next() * 74
+                    + (int32_t)oscTri[i].next() * 60;
+          sample = softClipInt16(m >> 8, 11200);
+          break;
+        }
+        int16_t s = oscSin[i].next();
+        int16_t c = oscCos[i].next();
+        int16_t t = oscTri[i].next();
+        int16_t bell = (int16_t)(((int32_t)oscCheby[i].next() * (int32_t)oscCos[i].next()) >> 7);
+        int16_t ring = (int16_t)(((int32_t)oscSaw[i].next() * (int32_t)s) >> 7);
+        int16_t shine = (int16_t)(((int32_t)c * (int32_t)c) >> 8);
+        int32_t m = (int32_t)c * 104
+                  + (int32_t)s * 66
+                  + (int32_t)t * 46
+                  + (int32_t)bell * 54
+                  + (int32_t)ring * 40
+                  + (int32_t)shine * 34;
+        sample = softClipInt16(m >> 8, 10800);
+        break;
+      }
     #if ENABLE_SOUND_SYNTH_BANKS
       case SOUND_SYNTH_SHAPE_FIRST:
       case SOUND_SYNTH_SHAPE_FIRST + 1:
@@ -1229,6 +1323,25 @@ AudioOutput updateAudio() {
 
     float envGain = (env / 255.0f) * voiceHoldGain[i] * voiceModAmp[i];
     int32_t voiceOut = (int32_t)((float)sample * envGain);
+    if (safeShape == 0) {
+      voiceOut = (voiceOut * 104) >> 7;  // Square -19%
+    } else if (safeShape == 14) {
+      voiceOut = (voiceOut * 110) >> 7;  // Saw -14%
+    } else if (safeShape == 1) {
+      voiceOut = (voiceOut * 150) >> 7;  // Triangle +17%
+    } else if (safeShape == 15) {
+      voiceOut = (voiceOut * 176) >> 7;  // NeoVox +37%
+    } else if (safeShape == 18) {
+      voiceOut = (voiceOut * 168) >> 7;  // Choir +31%
+    } else if (safeShape == 21) {
+      voiceOut = (voiceOut * 118) >> 7;  // Pno -8%
+    } else if (safeShape == 22) {
+      voiceOut = (voiceOut * 170) >> 7;  // Silk +33%
+    } else if (safeShape == 23) {
+      voiceOut = (voiceOut * 152) >> 7;  // Mist +19%
+    } else if (safeShape == 24) {
+      voiceOut = (voiceOut * 162) >> 7;  // Halo +26%
+    }
     if (voices[i].loopVoice) {
       mixedSynthLoop += voiceOut;
       synthActiveLoop++;
@@ -1309,13 +1422,17 @@ AudioOutput updateAudio() {
 
   int32_t synthOutLive = mixedSynthLive;
   int32_t synthOutLoop = mixedSynthLoop;
-  // Keep full transient energy for 1-2 notes (A+B behavior), then gradually tame dense chords.
-  if (synthActiveLive > 2) {
-    synthOutLive = (synthOutLive * 2) / synthActiveLive;
-  }
-  if (synthActiveLoop > 2) {
-    synthOutLoop = (synthOutLoop * 2) / synthActiveLoop;
-  }
+  // Keep A+B transient feel, but smooth gain transitions to avoid level bumps on note releases.
+  static float livePolyNorm = 1.0f;
+  static float loopPolyNorm = 1.0f;
+  float liveTargetNorm = (synthActiveLive > 2) ? (2.0f / (float)synthActiveLive) : 1.0f;
+  float loopTargetNorm = (synthActiveLoop > 2) ? (2.0f / (float)synthActiveLoop) : 1.0f;
+  const float normSlew = 0.0030f;
+  livePolyNorm += (liveTargetNorm - livePolyNorm) * normSlew;
+  loopPolyNorm += (loopTargetNorm - loopPolyNorm) * normSlew;
+  synthOutLive = (int32_t)((float)synthOutLive * livePolyNorm);
+  synthOutLoop = (int32_t)((float)synthOutLoop * loopPolyNorm);
+
   int32_t drumOut = (drumCount > 0) ? (mixedDrum / drumCount) : 0;
   float vscaleForDrumComp = masterVolume / 16000.0f;
   if (vscaleForDrumComp < 1.0f) vscaleForDrumComp = 1.0f;

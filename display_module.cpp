@@ -48,7 +48,11 @@ static uint16_t selectionHueForKey(int key) {
   if (row < 0 || col < 0) return 0;
 
   if (row == 0 && col < 4) return 22000;  // modes
-  if (selectionPage() == 2 && row == 1 && col < 5) return 52000;  // BPM row
+  if (selectionPage() == 2 && row == 1 && col < 4) return 52000;  // BPM row
+  if (selectionPage() == 2 && row == 1 && col >= 4) {
+    if (col == 4) return 3000; // Chrom: rose/red
+    return 16000; // other scales: orange-yellow
+  }
 
   // Check if this is an LFO mode effect in FX page
   if (selectionPage() == 1) {
@@ -89,7 +93,8 @@ static bool selectionKeyIsAvailable(int key) {
         return arpSlot >= 0 && arpSlot < ARP_PRESET_COUNT;
       }
       if (row == 1) {
-        return col < 5;
+        if (col < 4) return true;                 // BPM
+        return col < 8;                           // SCALE
       }
       return (flat - 16) < ENV_PRESET_COUNT;
     default:
@@ -122,7 +127,8 @@ static bool selectionKeyIsActive(int key) {
         return (flat - 4) == cachedArpIndex;
       }
       if (row == 1) {
-        return false;
+        if (col < 4) return false;
+        return (col - 4) == (int)(currentScaleIndex % 4);
       }
       int envSlot = flat - 16;
       return envSlot == cachedEnvIndex;
@@ -139,7 +145,7 @@ static bool selectionKeyIsDefault(int key) {
   int flat = row * COLS + col;
 
   if (selectionPage() == 2 && row == 0) return (flat - 4) == 0;
-  if (selectionPage() == 2 && row == 1) return col == 2;
+  if (selectionPage() == 2 && row == 1) return col == 1 || col == 4;
   if (selectionPage() == 2 && row >= 2) return (flat - 16) == 0;
 
   if (selectionPage() == 1) {
@@ -215,7 +221,11 @@ static void renderSelectionLeds(uint16_t t) {
       }
       uint16_t hue = selectionHueForKey(key);
       if (selectionKeyIsDefault(key)) {
-        hue = (key < 8) ? 9000 : 51000;
+        if (selectionPage() == 2 && r == 1 && c == 4) {
+          hue = 3000;
+        } else {
+          hue = (key < 8) ? 9000 : 51000;
+        }
       }
       int effectIdx = effectUiSlotToIndex(key - 4);
       bool isLfoFxSlot = (selectionPage() == 1) && (effectIdx == 16 || effectIdx == 24);
@@ -497,8 +507,9 @@ void renderDisplay() {
       u8g2.setCursor(sx(6), 101); u8g2.print(effectParam2Name(displayFx)); u8g2.print(": "); u8g2.print((int)fxParam2);
     } else if (selectionPage() == 2) {
       u8g2.setCursor(sx(6), 67); u8g2.print("BPM  : "); u8g2.print((int)bpm);
-      u8g2.setCursor(sx(6), 84); u8g2.print("R2 : -5 -1 100 +1 +5");
+      u8g2.setCursor(sx(6), 84); u8g2.print("R2: -5 -1 +1 +5");
       u8g2.setCursor(sx(6), 101); u8g2.print("ARP "); u8g2.print(arpPresets[cachedArpIndex].name); u8g2.print(" ENV "); u8g2.print(envPresets[cachedEnvIndex].name);
+      u8g2.print(" S "); u8g2.print(scaleNames[currentScaleIndex % 4]);
     } else {
       u8g2.setCursor(sx(6), 67); u8g2.print("INSTR: "); u8g2.print(shapeNames[cachedShape]);
       u8g2.setCursor(sx(6), 84); u8g2.print("ARP  : "); u8g2.print(arpPresets[cachedArpIndex].name);
@@ -531,7 +542,8 @@ void renderDisplay() {
 
   u8g2.setCursor(sx(6), 32); u8g2.print("Inst: "); u8g2.print(shapeNames[cachedShape]);
   u8g2.setCursor(sx(6), 45); u8g2.print("Env:  "); u8g2.print(envPresets[cachedEnvIndex].name);
-  u8g2.setCursor(sx(6), 58); u8g2.print("FX:   ");
+  u8g2.setCursor(sx(6), 58); u8g2.print("Scale:"); u8g2.print(scaleNames[currentScaleIndex % 4]);
+  u8g2.setCursor(sx(6), 71); u8g2.print("FX:   ");
   int fxCount = activeEffectCount();
   if (fxCount == 0) {
     u8g2.print("None");
@@ -548,9 +560,9 @@ void renderDisplay() {
       u8g2.print(fxCount - 1);
     }
   }
-  u8g2.setCursor(sx(6), 71); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
-  u8g2.setCursor(sx(6), 84); u8g2.print("Oct:  "); u8g2.print(octaveShift);
-  u8g2.setCursor(sx(6), 97); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
+  u8g2.setCursor(sx(6), 84); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
+  u8g2.setCursor(sx(6), 97); u8g2.print("Oct:  "); u8g2.print(octaveShift);
+  u8g2.setCursor(sx(6), 110); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
 
   if (currentMode == MODE_DRUMBOX) {
     uint8_t drumSteps = currentDrumSteps();
@@ -575,10 +587,10 @@ void renderDisplay() {
     u8g2.print("B:");
     u8g2.print(drumBanks[currentDrumBank].name);
   } else if (currentMode == MODE_INSTRUMENT) {
-    u8g2.setCursor(sx(6), 110);
+    u8g2.setCursor(sx(6), 123);
     u8g2.print("Arp:  ");
     u8g2.print(arpPresets[cachedArpIndex].name);
-    u8g2.setCursor(sx(6), 123);
+    u8g2.print(" ");
     u8g2.print(noteRecordArmed ? "REC " : "    ");
     u8g2.print(notePlaybackRunning ? "PLAY " : "     ");
     u8g2.print(currentDisplayedStep());

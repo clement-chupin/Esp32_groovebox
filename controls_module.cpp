@@ -47,7 +47,12 @@ void readPots() {
     potFilt[i] = (int)inverted;
   }
 
-  masterVolume = map(potFilt[0], 0, 4095, 0, 320000);
+  // Perceptual taper: less jump at low volume, more resolution in loud range.
+  float volNorm = (float)potFilt[0] / 4095.0f;
+  if (volNorm < 0.0f) volNorm = 0.0f;
+  if (volNorm > 1.0f) volNorm = 1.0f;
+  float volCurve = volNorm * volNorm;
+  masterVolume = volCurve * 320000.0f;
 
   // Shape/FX/ENV sont gérés par les pages de sélection (pas par pot en drum pour FX/ENV).
   if (currentMode != MODE_DRUMBOX && currentMode != MODE_DRUM_INSTRUMENT) {

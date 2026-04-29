@@ -7,64 +7,57 @@
 #if ENABLE_BURROUGHS_KICK_SAMPLE
 #include <samples/burroughs1_18649_int8.h>
 #endif
-#include "SOUNDS/zSAMPLE03.h"
-#include "SOUNDS/zSAMPLE04.h"
-#include "SOUNDS/zSAMPLE06.h"
-#include "SOUNDS/zSAMPLE07.h"
-#include "SOUNDS/zSAMPLE10.h"
-#include "SOUNDS/zSAMPLE11.h"
-#include "SOUNDS/zSAMPLE14.h"
-#include "SOUNDS/zSAMPLE15.h"
-#include "SOUNDS/zSAMPLE24.h"
-#include "SOUNDS/zSAMPLE36.h"
-#include "SOUNDS/zSAMPLE38.h"
-#include "SOUNDS/zSAMPLE40.h"
-#include "SOUNDS/zSAMPLE41.h"
-#include "SOUNDS/zSAMPLE42.h"
-#include "SOUNDS/zSAMPLE43.h"
-#include "SOUNDS/zSAMPLE44.h"
-#include "SOUNDS/zSAMPLE45.h"
-#include "SOUNDS/zSAMPLE46.h"
+// Crunch_E drum bank — compact selection to fit flash budget
+// kick1=24KB kick2=18KB snare1=19KB snare2=17KB snareB3=12KB
+// hihat1=10KB snare3=18KB bongo1=21KB  →  total ~139KB
+#include "SOUNDS/Crunch_E/kick1.h"
+#include "SOUNDS/Crunch_E/kick2.h"
+#include "SOUNDS/Crunch_E/snare1.h"
+#include "SOUNDS/Crunch_E/snare2.h"
+#include "SOUNDS/Crunch_E/snareB3.h"
+#include "SOUNDS/Crunch_E/hihat1.h"
+#include "SOUNDS/Crunch_E/snare3.h"
+#include "SOUNDS/Crunch_E/bongo1.h"
 
 #ifdef NUM_ELEMENTS
 #undef NUM_ELEMENTS
 #endif
 
 struct SoundDrumSampleDesc {
-  const int16_t* data;
+  const int* data;
   uint32_t len;
 };
 
-static const SoundDrumSampleDesc kSoundDrumPool[18] = {
-  {SAMPLE03, (uint32_t)(sizeof(SAMPLE03) / sizeof(SAMPLE03[0]))},
-  {SAMPLE04, (uint32_t)(sizeof(SAMPLE04) / sizeof(SAMPLE04[0]))},
-  {SAMPLE06, (uint32_t)(sizeof(SAMPLE06) / sizeof(SAMPLE06[0]))},
-  {SAMPLE07, (uint32_t)(sizeof(SAMPLE07) / sizeof(SAMPLE07[0]))},
-  {SAMPLE10, (uint32_t)(sizeof(SAMPLE10) / sizeof(SAMPLE10[0]))},
-  {SAMPLE11, (uint32_t)(sizeof(SAMPLE11) / sizeof(SAMPLE11[0]))},
-  {SAMPLE14, (uint32_t)(sizeof(SAMPLE14) / sizeof(SAMPLE14[0]))},
-  {SAMPLE15, (uint32_t)(sizeof(SAMPLE15) / sizeof(SAMPLE15[0]))},
-  {SAMPLE24, (uint32_t)(sizeof(SAMPLE24) / sizeof(SAMPLE24[0]))},
-  {SAMPLE36, (uint32_t)(sizeof(SAMPLE36) / sizeof(SAMPLE36[0]))},
-  {SAMPLE38, (uint32_t)(sizeof(SAMPLE38) / sizeof(SAMPLE38[0]))},
-  {SAMPLE40, (uint32_t)(sizeof(SAMPLE40) / sizeof(SAMPLE40[0]))},
-  {SAMPLE41, (uint32_t)(sizeof(SAMPLE41) / sizeof(SAMPLE41[0]))},
-  {SAMPLE42, (uint32_t)(sizeof(SAMPLE42) / sizeof(SAMPLE42[0]))},
-  {SAMPLE43, (uint32_t)(sizeof(SAMPLE43) / sizeof(SAMPLE43[0]))},
-  {SAMPLE44, (uint32_t)(sizeof(SAMPLE44) / sizeof(SAMPLE44[0]))},
-  {SAMPLE45, (uint32_t)(sizeof(SAMPLE45) / sizeof(SAMPLE45[0]))},
-  {SAMPLE46, (uint32_t)(sizeof(SAMPLE46) / sizeof(SAMPLE46[0]))}
+// Pool: 0=kick1, 1=kick2, 2=snare1, 3=snare2, 4=snareB3, 5=hihat1, 6=snare3, 7=bongo1
+static const SoundDrumSampleDesc kSoundDrumPool[8] = {
+  {kick1,   (uint32_t)(sizeof(kick1)   / sizeof(kick1[0]))},
+  {kick2,   (uint32_t)(sizeof(kick2)   / sizeof(kick2[0]))},
+  {snare1,  (uint32_t)(sizeof(snare1)  / sizeof(snare1[0]))},
+  {snare2,  (uint32_t)(sizeof(snare2)  / sizeof(snare2[0]))},
+  {snareB3, (uint32_t)(sizeof(snareB3) / sizeof(snareB3[0]))},
+  {hihat1,  (uint32_t)(sizeof(hihat1)  / sizeof(hihat1[0]))},
+  {snare3,  (uint32_t)(sizeof(snare3)  / sizeof(snare3[0]))},
+  {bongo1,  (uint32_t)(sizeof(bongo1)  / sizeof(bongo1[0]))}
 };
 
+// Banks: rows = [kick, snare, hihat, perc]
+// Bank 0: kick1, snare1,  hihat1, bongo1
+// Bank 1: kick2, snare2,  hihat1, snareB3
+// Bank 2: kick1, snare3,  hihat1, snare2
+// Bank 3: kick2, snareB3, hihat1, bongo1
+// Bank 4: kick1, snare2,  hihat1, snare3
+// Bank 5: kick2, snare1,  hihat1, snareB3
+// Bank 6: kick1, snareB3, hihat1, snare1
+// Bank 7: kick2, snare3,  hihat1, bongo1
 static const uint8_t kSoundDrumBankMap[SOUND_DRUM_BANK_COUNT][DRUM_ROWS] = {
-  {11, 12, 13, 14},
-  {2, 4, 9, 10},
-  {6, 7, 15, 17},
-  {0, 5, 8, 16},
-  {1, 12, 14, 15},
-  {3, 4, 10, 13},
-  {2, 5, 9, 17},
-  {0, 6, 11, 16}
+  {0, 2, 5, 7},
+  {1, 3, 5, 4},
+  {0, 6, 5, 3},
+  {1, 4, 5, 7},
+  {0, 3, 5, 6},
+  {1, 2, 5, 4},
+  {0, 4, 5, 2},
+  {1, 6, 5, 7}
 };
 
 static bool soundDrumVoiceActive[DRUM_ROWS] = {false};
