@@ -33,6 +33,10 @@ static int effectUiSlotToIndex(int uiSlot) {
   return -1;                            // trailing grid cells unused
 }
 
+static inline bool splitUiSlotsAvailable() {
+  return (SHAPE_COUNT + 2) < (MAIN_BUTTONS - 4);
+}
+
 static const char* selectionPageName() {
   switch (selectionPage()) {
     case 0: return "INSTR";
@@ -62,6 +66,16 @@ static uint16_t selectionHueForKey(int key) {
     if (effectIdx == 24) return 3500;   // orange for LFO_Sqr
   }
 
+  if (selectionPage() == 0) {
+    int flat = row * COLS + col;
+    int slot = flat - 4;
+    if (splitUiSlotsAvailable()) {
+      if (slot == SHAPE_COUNT) return 14000;
+      if (slot == SHAPE_COUNT + 1) return 43000;
+      if (slot == SHAPE_COUNT + 2) return 52000;
+    }
+  }
+
   switch (selectionPage()) {
     case 0: return 0;       // instruments
     case 1: return 44000;   // effects
@@ -81,7 +95,9 @@ static bool selectionKeyIsAvailable(int key) {
   switch (selectionPage()) {
     case 0: {
       int slot = flat - 4;
-      return (slot >= 0 && slot < SHAPE_COUNT);
+      if (slot >= 0 && slot < SHAPE_COUNT) return true;
+      if (splitUiSlotsAvailable() && slot >= SHAPE_COUNT && slot <= SHAPE_COUNT + 2) return true;
+      return false;
     }
     case 1: {
       int effectIdx = effectUiSlotToIndex(flat - 4);
@@ -114,7 +130,16 @@ static bool selectionKeyIsActive(int key) {
   switch (selectionPage()) {
     case 0: {
       int slot = flat - 4;
-      return (slot >= 0 && slot == cachedShape);
+      if (slot < 0) return false;
+      if (slot < SHAPE_COUNT) {
+        if (!instrumentSplitEnabled) return slot == cachedShape;
+        return slot == splitShapeLeft || slot == splitShapeRight;
+      }
+      if (!splitUiSlotsAvailable()) return false;
+      if (slot == SHAPE_COUNT) return instrumentSplitEnabled;
+      if (slot == SHAPE_COUNT + 1) return instrumentSplitEnabled && splitEditSide == 0;
+      if (slot == SHAPE_COUNT + 2) return instrumentSplitEnabled && splitEditSide == 1;
+      return false;
     }
     case 1: {
       int effectIdx = effectUiSlotToIndex(flat - 4);
@@ -322,7 +347,11 @@ void renderLeds() {
     for (int r = 0; r < ROWS; r++) {
       for (int c = 0; c < COLS; c++) {
         int k = r * COLS + c;
-        uint16_t hue = (uint16_t)(t + c * 6000 + cachedShape * 2400 + cachedEffectIndex * 900);
+        uint8_t liveShape = (uint8_t)cachedShape;
+        if (instrumentSplitEnabled) {
+          liveShape = (c < (COLS / 2)) ? splitShapeLeft : splitShapeRight;
+        }
+        uint16_t hue = (uint16_t)(t + c * 6000 + liveShape * 2400 + cachedEffectIndex * 900);
         uint8_t val = pressed[k] ? (uint8_t)constrain(pressBoost + fxAmount / 4, 0, 255) : 8;
         lightButton(r, c, dynamicColor(hue, 230, val));
       }
@@ -500,23 +529,32 @@ void renderDisplay() {
     u8g2.setFont(u8g2_font_7x13B_tf);
     u8g2.setCursor(sx(6), 16); u8g2.print("MODE : "); u8g2.print(modeName(currentMode));
     u8g2.setCursor(sx(6), 33); u8g2.print("PAGE : "); u8g2.print(selectionPageName());
-    u8g2.setCursor(sx(6), 50); u8g2.print("EFFET: "); u8g2.print(effectNames[cachedEffectIndex]);
     if (selectionPage() == 1) {
+      u8g2.setCursor(sx(6), 50); u8g2.print("EFFET: "); u8g2.print(effectNames[cachedEffectIndex]);
       u8g2.setCursor(sx(6), 67); u8g2.print("FXLv : "); u8g2.print((int)fxAmount);
       u8g2.setCursor(sx(6), 84); u8g2.print(effectParam1Name(displayFx)); u8g2.print(": "); u8g2.print((int)fxParam1);
       u8g2.setCursor(sx(6), 101); u8g2.print(effectParam2Name(displayFx)); u8g2.print(": "); u8g2.print((int)fxParam2);
     } else if (selectionPage() == 2) {
-      u8g2.setCursor(sx(6), 67); u8g2.print("BPM  : "); u8g2.print((int)bpm);
-      u8g2.setCursor(sx(6), 84); u8g2.print("R2: -5 -1 +1 +5");
-      u8g2.setCursor(sx(6), 101); u8g2.print("ARP "); u8g2.print(arpPresets[cachedArpIndex].name); u8g2.print(" ENV "); u8g2.print(envPresets[cachedEnvIndex].name);
-      u8g2.print(" S "); u8g2.print(scaleNames[currentScaleIndex % 4]);
+      u8g2.setCursor(sx(6), 50); u8g2.print("ARP  : "); u8g2.print(arpPresets[cachedArpIndex].name);
+      u8g2.setCursor(sx(6), 67); u8g2.print("ENV  : "); u8g2.print(envPresets[cachedEnvIndex].name);
+      u8g2.setCursor(sx(6), 84); u8g2.print("BPM  : "); u8g2.print((int)bpm);
+      u8g2.setCursor(sx(6), 101); u8g2.print("SCALE: "); u8g2.print(scaleNames[currentScaleIndex % 4]);
     } else {
+      u8g2.setCursor(sx(6), 50); u8g2.print("EFFET: "); u8g2.print(effectNames[cachedEffectIndex]);
       u8g2.setCursor(sx(6), 67); u8g2.print("INSTR: "); u8g2.print(shapeNames[cachedShape]);
       u8g2.setCursor(sx(6), 84); u8g2.print("ARP  : "); u8g2.print(arpPresets[cachedArpIndex].name);
       u8g2.setCursor(sx(6), 101); u8g2.print("ENV  : "); u8g2.print(envPresets[cachedEnvIndex].name);
+      u8g2.setCursor(sx(6), 118);
+      if (instrumentSplitEnabled) {
+        u8g2.print("SPLIT ON L:");
+        u8g2.print(shapeNames[splitShapeLeft]);
+        u8g2.print(" R:");
+        u8g2.print(shapeNames[splitShapeRight]);
+      } else {
+        u8g2.print("SPLIT OFF");
+      }
     }
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.setCursor(sx(6), 116); u8g2.print("SELECT: toggle | B2/B3/B4 pages");
     u8g2.setCursor(sx(6), 127); u8g2.print(noteRecordArmed ? "REC " : "    ");
     u8g2.print(notePlaybackRunning ? "PLAY " : "     ");
     u8g2.print(currentDisplayedStep());
@@ -540,10 +578,18 @@ void renderDisplay() {
   // Ligne séparatrice
   u8g2.drawHLine(sx(6), 19, 116);
 
-  u8g2.setCursor(sx(6), 32); u8g2.print("Inst: "); u8g2.print(shapeNames[cachedShape]);
-  u8g2.setCursor(sx(6), 45); u8g2.print("Env:  "); u8g2.print(envPresets[cachedEnvIndex].name);
-  u8g2.setCursor(sx(6), 58); u8g2.print("Scale:"); u8g2.print(scaleNames[currentScaleIndex % 4]);
-  u8g2.setCursor(sx(6), 71); u8g2.print("FX:   ");
+  if (instrumentSplitEnabled) {
+    u8g2.setCursor(sx(6), 32); u8g2.print("InstL:"); u8g2.print(shapeNames[splitShapeLeft]);
+    u8g2.setCursor(sx(6), 45); u8g2.print("InstR:"); u8g2.print(shapeNames[splitShapeRight]);
+    u8g2.setCursor(sx(6), 58); u8g2.print("Env:  "); u8g2.print(envPresets[cachedEnvIndex].name);
+    u8g2.setCursor(sx(6), 71); u8g2.print("Scale:"); u8g2.print(scaleNames[currentScaleIndex % 4]);
+  } else {
+    u8g2.setCursor(sx(6), 32); u8g2.print("Inst: "); u8g2.print(shapeNames[cachedShape]);
+    u8g2.setCursor(sx(6), 45); u8g2.print("Env:  "); u8g2.print(envPresets[cachedEnvIndex].name);
+    u8g2.setCursor(sx(6), 58); u8g2.print("Scale:"); u8g2.print(scaleNames[currentScaleIndex % 4]);
+    u8g2.setCursor(sx(6), 71); u8g2.print("FX:   ");
+  }
+  u8g2.setCursor(sx(6), 84); u8g2.print("FX:   ");
   int fxCount = activeEffectCount();
   if (fxCount == 0) {
     u8g2.print("None");
@@ -560,9 +606,9 @@ void renderDisplay() {
       u8g2.print(fxCount - 1);
     }
   }
-  u8g2.setCursor(sx(6), 84); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
-  u8g2.setCursor(sx(6), 97); u8g2.print("Oct:  "); u8g2.print(octaveShift);
-  u8g2.setCursor(sx(6), 110); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
+  u8g2.setCursor(sx(6), 97); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
+  u8g2.setCursor(sx(6), 110); u8g2.print("Oct:  "); u8g2.print(octaveShift);
+  u8g2.setCursor(sx(6), 123); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
 
   if (currentMode == MODE_DRUMBOX) {
     uint8_t drumSteps = currentDrumSteps();
@@ -587,16 +633,18 @@ void renderDisplay() {
     u8g2.print("B:");
     u8g2.print(drumBanks[currentDrumBank].name);
   } else if (currentMode == MODE_INSTRUMENT) {
-    u8g2.setCursor(sx(6), 123);
+    u8g2.setCursor(sx(6), 110);
     u8g2.print("Arp:  ");
     u8g2.print(arpPresets[cachedArpIndex].name);
-    u8g2.print(" ");
-    u8g2.print(noteRecordArmed ? "REC " : "    ");
-    u8g2.print(notePlaybackRunning ? "PLAY " : "     ");
+
+    u8g2.setCursor(sx(6), 123);
+    u8g2.print(noteRecordArmed ? "R " : "  ");
+    u8g2.print(notePlaybackRunning ? "P " : "  ");
     u8g2.print(currentDisplayedStep());
     u8g2.print("/");
     u8g2.print(currentPerformanceLength());
-    u8g2.print(loopTrackLocked ? " LOCK" : " FREE");
+    if (instrumentSplitEnabled) u8g2.print(" SP");
+    u8g2.print(loopTrackLocked ? " LK" : " FR");
   } else if (currentMode == MODE_MASTER) {
     const char* trackNames[3] = {"INS", "DRM", "LOOP"};
     for (int i = 0; i < 3; i++) {

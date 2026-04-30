@@ -37,6 +37,10 @@ extern uint8_t performanceStep;
 extern uint8_t performanceLengthIndex;
 extern uint8_t masterTrackGainQ8[3];
 extern bool masterTrackFxEnabled[3];
+extern bool instrumentSplitEnabled;
+extern uint8_t splitShapeLeft;
+extern uint8_t splitShapeRight;
+extern uint8_t splitEditSide;
 
 // Boutons et LED
 extern bool pressed[TOTAL_BUTTONS];

@@ -279,15 +279,8 @@ float keyToFreqPentatonic4x4(int row, int col) {
 // ==================== GESTION DES ENVELOPPES ====================
 void applyEnvPreset(int i, uint8_t envMode) {
   uint8_t idx = (uint8_t)constrain((int)envMode, 0, ENV_PRESET_COUNT - 1);
-  uint16_t sustainMs = 600000;
-  switch (idx) {
-    // Natural auto-decay to zero only for Pluck, Pad and Piano variants.
-    case ENV_MODE_PLUCK: sustainMs = 240; break;
-    case ENV_MODE_PAD:   sustainMs = 2600; break;
-    case ENV_MODE_PIANO: sustainMs = 520; break;
-    case ENV_MODE_PIANO2: sustainMs = 1200; break;
-    default:             sustainMs = 600000; break;
-  }
+  // ADSR sustain is level-held until noteOff. Keep sustain stage effectively infinite.
+  const uint16_t sustainMs = 600000;
   envelope[i].setADLevels(255, envPresets[idx].sustainLevel);
   envelope[i].setTimes(
     envPresets[idx].attackMs,

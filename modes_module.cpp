@@ -33,6 +33,14 @@ uint8_t performanceStep = 0;
 uint8_t performanceLengthIndex = 1;
 uint8_t masterTrackGainQ8[3] = {255, 255, 255};
 bool masterTrackFxEnabled[3] = {true, false, true};
+bool instrumentSplitEnabled = false;
+uint8_t splitShapeLeft = 0;
+uint8_t splitShapeRight = 1;
+uint8_t splitEditSide = 0;
+
+static constexpr uint8_t kSplitToggleSlot = SHAPE_COUNT;
+static constexpr uint8_t kSplitEditLeftSlot = SHAPE_COUNT + 1;
+static constexpr uint8_t kSplitEditRightSlot = SHAPE_COUNT + 2;
 
 // Déclarées dans input_module (sera réorganisé)
 extern bool pressed[TOTAL_BUTTONS];
@@ -50,6 +58,10 @@ static bool previewNoteActive = false;
 static unsigned long previewNoteOffMs = 0;
 static constexpr uint8_t PREVIEW_NOTE_KEY = 0xFF;
 static constexpr uint8_t MAX_RECORDED_LOOP_NOTES = 96;
+
+static inline bool splitUiSlotsAvailable() {
+  return (kSplitEditRightSlot < (MAIN_BUTTONS - 4));
+}
 
 struct RecordedLoopNote {
   bool active;
@@ -106,6 +118,15 @@ static void triggerInstrumentPreview() {
   stopPreviewNote();
   float baseFreq = keyToFreqColumnOrder(0);
   noteOnPatched(PREVIEW_NOTE_KEY, baseFreq, baseFreq, (uint8_t)cachedShape, (uint8_t)cachedEnvIndex, false);
+  uint16_t previewMs = (uint16_t)constrain((60000UL / bpm) / 2UL, 90UL, 600UL);
+  previewNoteOffMs = millis() + previewMs;
+  previewNoteActive = true;
+}
+
+static void triggerInstrumentPreviewForShape(uint8_t shape) {
+  stopPreviewNote();
+  float baseFreq = keyToFreqColumnOrder(0);
+  noteOnPatched(PREVIEW_NOTE_KEY, baseFreq, baseFreq, shape, (uint8_t)cachedEnvIndex, false);
   uint16_t previewMs = (uint16_t)constrain((60000UL / bpm) / 2UL, 90UL, 600UL);
   previewNoteOffMs = millis() + previewMs;
   previewNoteActive = true;
@@ -447,8 +468,36 @@ static void applySelectionChoice(uint8_t key) {
       break;
     case SEL_INSTRUMENT:
       if (slot < SHAPE_COUNT) {
-        cachedShape = slot;
-        if (currentMode == MODE_INSTRUMENT) triggerInstrumentPreview();
+        if (instrumentSplitEnabled) {
+          if (splitEditSide == 0) splitShapeLeft = (uint8_t)slot;
+          else splitShapeRight = (uint8_t)slot;
+          cachedShape = (splitEditSide == 0) ? splitShapeLeft : splitShapeRight;
+        } else {
+          cachedShape = slot;
+          splitShapeLeft = (uint8_t)slot;
+        }
+        if (currentMode == MODE_INSTRUMENT) {
+          triggerInstrumentPreviewForShape((uint8_t)slot);
+        }
+      } else if (splitUiSlotsAvailable() && slot == kSplitToggleSlot) {
+        instrumentSplitEnabled = !instrumentSplitEnabled;
+        if (instrumentSplitEnabled) {
+          splitShapeLeft = (uint8_t)constrain((int)cachedShape, 0, SHAPE_COUNT - 1);
+          if (splitShapeRight >= SHAPE_COUNT || splitShapeRight == splitShapeLeft) {
+            splitShapeRight = (uint8_t)((splitShapeLeft + 1) % SHAPE_COUNT);
+          }
+          splitEditSide = 0;
+          cachedShape = splitShapeLeft;
+        } else {
+          splitEditSide = 0;
+          cachedShape = splitShapeLeft;
+        }
+      } else if (splitUiSlotsAvailable() && slot == kSplitEditLeftSlot) {
+        splitEditSide = 0;
+        cachedShape = splitShapeLeft;
+      } else if (splitUiSlotsAvailable() && slot == kSplitEditRightSlot) {
+        splitEditSide = 1;
+        cachedShape = splitShapeRight;
       }
       break;
     case SEL_EFFECT:
@@ -660,31 +709,50 @@ void handleMasterMode() {
 }
 
 // ==================== INSTRUMENT MODE ====================
-static bool liveKeyUsesOneShotEnv(uint8_t key) {
+static bool liveKeyUsesFullEnvelopeMode(uint8_t key) {
   for (int i = 0; i < VOICE_COUNT; i++) {
     if (!voices[i].active || voices[i].loopVoice) continue;
     if (voices[i].key != key) continue;
     uint8_t env = voices[i].envMode;
-    if (env == ENV_MODE_PLUCK || env == ENV_MODE_PAD || env == ENV_MODE_PIANO) return true;
+    if (env == ENV_MODE_PIANO || env == ENV_MODE_CRYSTAL2) return true;
   }
   return false;
+}
+
+static inline bool isLeftSplitKey(uint8_t key) {
+  return (key % COLS) < (COLS / 2);
+}
+
+static float splitKeyToFreqColumnMirror(int key) {
+  int row = key / COLS;
+  int localCol = key % (COLS / 2);
+  int mirroredKey = row * COLS + localCol;
+  return keyToFreqColumnOrder(mirroredKey);
+}
+
+static uint8_t splitShapeForKey(uint8_t key) {
+  return isLeftSplitKey(key) ? splitShapeLeft : splitShapeRight;
 }
 
 void handleInstrumentMode() {
   for (int key = 0; key < MAIN_BUTTONS; key++) {
     if (justPressed[key]) {
-      float baseFreq = keyToFreqColumnOrder(key);
+      float baseFreq = instrumentSplitEnabled ? splitKeyToFreqColumnMirror(key) : keyToFreqColumnOrder(key);
       float playFreq = baseFreq;
       if (cachedArpIndex > 0) {
         playFreq *= powf(2.0f, (float)currentArpSemitone() / 12.0f);
       }
-      noteOn(key, baseFreq, playFreq);
+      if (instrumentSplitEnabled) {
+        noteOnPatched((uint8_t)key, baseFreq, playFreq, splitShapeForKey((uint8_t)key), (uint8_t)cachedEnvIndex, false);
+      } else {
+        noteOn((uint8_t)key, baseFreq, playFreq);
+      }
       if (noteRecordArmed) {
         recordLoopNoteOn((uint8_t)key, baseFreq, playFreq);
       }
     }
     if (justReleased[key]) {
-      if (!liveKeyUsesOneShotEnv((uint8_t)key)) {
+      if (!liveKeyUsesFullEnvelopeMode((uint8_t)key)) {
         noteOff(key);
       }
       if (noteRecordArmed) {
@@ -803,7 +871,7 @@ void processInputActions() {
     // pour éviter les notes tenues indéfiniment.
     if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
       for (int key = 0; key < MAIN_BUTTONS; key++) {
-        if (justReleased[key] && !liveKeyUsesOneShotEnv((uint8_t)key)) noteOff((uint8_t)key);
+        if (justReleased[key] && !liveKeyUsesFullEnvelopeMode((uint8_t)key)) noteOff((uint8_t)key);
       }
     }
 

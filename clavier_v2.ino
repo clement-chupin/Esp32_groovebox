@@ -963,9 +963,11 @@ AudioOutput updateAudio() {
 
     uint8_t env = envelope[i].next();
 
-    // Déactiver quand enveloppe éteinte: gate relâché, ou mode one-shot terminé.
-    bool oneShotEnv = (voices[i].envMode == ENV_MODE_PLUCK || voices[i].envMode == ENV_MODE_PAD || voices[i].envMode == ENV_MODE_PIANO);
-    if (env == 0 && (!voices[i].gate || oneShotEnv)) {
+    // Some envelopes are full-run modes (play to end even if key is released).
+    bool fullEnvelopeMode = (voices[i].envMode == ENV_MODE_PIANO || voices[i].envMode == ENV_MODE_CRYSTAL2);
+
+    // Voice ends when gate is released and envelope reached zero, or when full-run envelope has finished.
+    if (env == 0 && (!voices[i].gate || fullEnvelopeMode)) {
       voices[i].gate = false;
       voices[i].active = false;
       continue;
@@ -974,8 +976,6 @@ AudioOutput updateAudio() {
     if (voices[i].envMode == ENV_MODE_FADE && voices[i].gate) {
       voiceHoldGain[i] *= 0.9996f;
       if (voiceHoldGain[i] < 0.12f) voiceHoldGain[i] = 0.12f;
-    } else if (!voices[i].gate) {
-      voiceHoldGain[i] *= 0.9985f;
     }
 
     if (voices[i].envMode == ENV_MODE_PITCH && voicePitchEnvSemi[i] > 0.02f) {
@@ -1321,7 +1321,21 @@ AudioOutput updateAudio() {
       default: sample = oscSin[i].next(); break;
     }
 
-    float envGain = (env / 255.0f) * voiceHoldGain[i] * voiceModAmp[i];
+    float envNorm = env / 255.0f;
+    uint8_t envIdx = (uint8_t)constrain((int)voices[i].envMode, 0, ENV_PRESET_COUNT - 1);
+    uint8_t curve = envPresets[envIdx].curve;
+    float envShaped = envNorm;
+    if (curve > 128) {
+      float t = (curve - 128) / 127.0f;
+      float smooth = envNorm * envNorm * (3.0f - 2.0f * envNorm);  // smoothstep
+      envShaped += (smooth - envNorm) * t;
+    } else if (curve < 128) {
+      float t = (128 - curve) / 128.0f;
+      float tight = envNorm * envNorm;
+      envShaped += (tight - envNorm) * t;
+    }
+
+    float envGain = envShaped * voiceHoldGain[i] * voiceModAmp[i];
     int32_t voiceOut = (int32_t)((float)sample * envGain);
     if (safeShape == 0) {
       voiceOut = (voiceOut * 104) >> 7;  // Square -19%
@@ -1422,16 +1436,6 @@ AudioOutput updateAudio() {
 
   int32_t synthOutLive = mixedSynthLive;
   int32_t synthOutLoop = mixedSynthLoop;
-  // Keep A+B transient feel, but smooth gain transitions to avoid level bumps on note releases.
-  static float livePolyNorm = 1.0f;
-  static float loopPolyNorm = 1.0f;
-  float liveTargetNorm = (synthActiveLive > 2) ? (2.0f / (float)synthActiveLive) : 1.0f;
-  float loopTargetNorm = (synthActiveLoop > 2) ? (2.0f / (float)synthActiveLoop) : 1.0f;
-  const float normSlew = 0.0030f;
-  livePolyNorm += (liveTargetNorm - livePolyNorm) * normSlew;
-  loopPolyNorm += (loopTargetNorm - loopPolyNorm) * normSlew;
-  synthOutLive = (int32_t)((float)synthOutLive * livePolyNorm);
-  synthOutLoop = (int32_t)((float)synthOutLoop * loopPolyNorm);
 
   int32_t drumOut = (drumCount > 0) ? (mixedDrum / drumCount) : 0;
   float vscaleForDrumComp = masterVolume / 16000.0f;

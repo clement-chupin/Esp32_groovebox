@@ -108,10 +108,11 @@ struct EnvPreset {
   uint16_t attackMs, decayMs;
   uint8_t  sustainLevel;
   uint16_t releaseMs;
+  uint8_t curve;
 };
 
 extern const EnvPreset envPresets[];
-#define ENV_PRESET_COUNT 9
+#define ENV_PRESET_COUNT 12
 
 enum EnvMode : uint8_t {
   ENV_MODE_NORMAL = 0,
@@ -119,10 +120,13 @@ enum EnvMode : uint8_t {
   ENV_MODE_PLUCK  = 2,
   ENV_MODE_PAD    = 3,
   ENV_MODE_PIANO  = 4,
-  ENV_MODE_FADE   = 5,
-  ENV_MODE_PITCH  = 6,
-  ENV_MODE_SLIDE  = 7,
-  ENV_MODE_PIANO2 = 8
+  ENV_MODE_PIANO2 = 5,
+  ENV_MODE_PIANO3 = 6,
+  ENV_MODE_FADE   = 7,
+  ENV_MODE_PITCH  = 8,
+  ENV_MODE_SLIDE  = 9,
+  ENV_MODE_CRYSTAL = 10,
+  ENV_MODE_CRYSTAL2 = 11
 };
 
 // ==================== EFFETS ====================
