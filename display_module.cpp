@@ -584,10 +584,7 @@ void renderDisplay() {
       u8g2.setCursor(sx(6), 101); u8g2.print("ENV  : "); u8g2.print(envPresets[cachedEnvIndex].name);
       u8g2.setCursor(sx(6), 118);
       if (instrumentSplitEnabled) {
-        u8g2.print("SPLIT ON L:");
-        u8g2.print(shapeNames[splitShapeLeft]);
-        u8g2.print(" R:");
-        u8g2.print(shapeNames[splitShapeRight]);
+        u8g2.print("SPLIT ON");
       } else {
         u8g2.print("SPLIT OFF");
       }
@@ -643,65 +640,52 @@ void renderDisplay() {
       u8g2.print(fxCount - 1);
     }
   }
-  u8g2.setCursor(sx(6), 97); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
-  u8g2.setCursor(sx(6), 110); u8g2.print("Oct:  "); u8g2.print(octaveShift);
-  u8g2.setCursor(sx(6), 123); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
-
-  if (currentMode == MODE_DRUMBOX) {
-    uint8_t drumSteps = currentDrumSteps();
-    u8g2.setCursor(sx(6), 110);
-    u8g2.print("Pos:  ");
-    u8g2.print((int)drumStep + 1);
-    u8g2.print("/");
-    u8g2.print((int)drumSteps);
-    u8g2.print(drumRun ? " RUN" : " STOP");
-    u8g2.setCursor(sx(6), 123);
-    u8g2.print("Div:");
-    if (drumSteps == 4) u8g2.print("1/4 ");
-    else if (drumSteps == 8) u8g2.print("1/8 ");
-    else u8g2.print("1/16");
-    if (drumSteps == 16) {
-      u8g2.print(" P");
-      u8g2.print((int)(drumEditPage + 1));
-      u8g2.print(" ");
-    } else {
-      u8g2.print(" ");
+  if (currentMode == MODE_INSTRUMENT) {
+    if (!instrumentSplitEnabled) {
+      u8g2.setCursor(sx(6), 71); u8g2.print("Arp:  "); u8g2.print(arpPresets[cachedArpIndex].name);
     }
-    u8g2.print("B:");
-    u8g2.print(drumBanks[currentDrumBank].name);
-  } else if (currentMode == MODE_INSTRUMENT) {
-    u8g2.setCursor(sx(6), 110);
-    u8g2.print("Arp:  ");
-    u8g2.print(arpPresets[cachedArpIndex].name);
-
+    u8g2.setCursor(sx(6), 97); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
+    u8g2.setCursor(sx(6), 110); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
+    u8g2.print(" Oct:"); u8g2.print(octaveShift);
     u8g2.setCursor(sx(6), 123);
-    u8g2.print(noteRecordArmed ? "R " : "  ");
-    u8g2.print(notePlaybackRunning ? "P " : "  ");
+    u8g2.print(noteRecordArmed ? "REC " : "    ");
+    u8g2.print(notePlaybackRunning ? "PLAY " : "     ");
     u8g2.print(currentDisplayedStep());
     u8g2.print("/");
     u8g2.print(currentPerformanceLength());
     if (instrumentSplitEnabled) u8g2.print(" SP");
     u8g2.print(loopTrackLocked ? " LK" : " FR");
+  } else if (currentMode == MODE_DRUMBOX) {
+    uint8_t drumSteps = currentDrumSteps();
+    u8g2.setCursor(sx(6), 71); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
+    u8g2.setCursor(sx(6), 97); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
+    u8g2.setCursor(sx(6), 110); u8g2.print("Pos:  ");
+    u8g2.print((int)drumStep + 1); u8g2.print("/"); u8g2.print((int)drumSteps);
+    u8g2.print(drumRun ? " RUN" : " STOP");
+    u8g2.setCursor(sx(6), 123); u8g2.print("Div:");
+    if (drumSteps == 4) u8g2.print("1/4 ");
+    else if (drumSteps == 8) u8g2.print("1/8 ");
+    else u8g2.print("1/16");
+    if (drumSteps == 16) { u8g2.print(" P"); u8g2.print((int)(drumEditPage + 1)); u8g2.print(" "); }
+    else { u8g2.print(" "); }
+    u8g2.print("B:"); u8g2.print(drumBanks[currentDrumBank].name);
   } else if (currentMode == MODE_MASTER) {
+    u8g2.setCursor(sx(6), 71); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
     const char* trackNames[3] = {"INS", "DRM", "LOOP"};
+    const int trackY[3] = {97, 110, 123};
     for (int i = 0; i < 3; i++) {
-      int y = 110 + i * 6;
-      u8g2.setCursor(sx(6), y);
-      u8g2.print(trackNames[i]);
-      u8g2.print(": ");
+      u8g2.setCursor(sx(6), trackY[i]);
+      u8g2.print(trackNames[i]); u8g2.print(": ");
       uint16_t pct = (uint16_t)((masterTrackGainQ8[i] * 200U) / 255U);
-      u8g2.print((int)pct);
-      u8g2.print("% ");
+      u8g2.print((int)pct); u8g2.print("% ");
       u8g2.print(masterTrackFxEnabled[i] ? "FX" : "DRY");
     }
-    u8g2.setCursor(sx(6), 127);
-    u8g2.print("L1-3 vol, C8 FX on/off");
   } else {
-    u8g2.setCursor(sx(6), 110);
-    u8g2.print("L:loop R:drum");
-    u8g2.setCursor(sx(6), 123);
-    u8g2.print("Bank: ");
-    u8g2.print(drumBanks[currentDrumBank].name);
+    // MODE_DRUM_INSTRUMENT et autres
+    u8g2.setCursor(sx(6), 71); u8g2.print("BPM:  "); u8g2.print((int)lroundf((float)bpm));
+    u8g2.setCursor(sx(6), 97); u8g2.print("FXLv: "); u8g2.print((int)fxAmount);
+    u8g2.setCursor(sx(6), 110); u8g2.print("Bank: "); u8g2.print(drumBanks[currentDrumBank].name);
+    u8g2.setCursor(sx(6), 123); u8g2.print("Oct:  "); u8g2.print(octaveShift);
   }
 
   u8g2.sendBuffer();
