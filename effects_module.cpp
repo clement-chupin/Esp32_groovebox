@@ -19,17 +19,21 @@ uint8_t lfoSquareDepthParam = 128;
 
 static const char* kFxParam1Names[EFFECT_COUNT] = {
   "-", "Res", "Cut", "FB", "FB", "Depth", "Depth", "Res",
-  "Res", "Drv", "Depth", "Drive", "Hold", "-", "Sens", "Size",
+  "-", "Drv", "Depth", "Drive", "Hold", "-", "Sens", "Size",
   "Freq", "Bias", "Rate", "Floor", "Peak", "Semi", "Tone", "Vow",
   "Freq", "Rate", "-", "-"
 };
 
 static const char* kFxParam2Names[EFFECT_COUNT] = {
   "-", "Drv", "Drv", "Wet", "Tone", "FB", "Res", "FB",
-  "Drv", "Blend", "FB", "Tone", "Bits", "-", "Res", "Tone",
+  "-", "Blend", "FB", "Tone", "Bits", "-", "Res", "Tone",
   "Depth", "Depth", "Mix", "Res", "Res", "Wet", "Mix", "Move",
   "Depth", "Res", "-", "-"
 };
+
+static inline bool isRemovedEffectSlot(int idx) {
+  return idx == 8 || idx == 13 || idx == 26 || idx == 27;
+}
 
 // ==================== INITIALISATION ====================
 void initEffects() {
@@ -39,6 +43,8 @@ void initEffects() {
   lfoModSquare.setFreq(1.0f);  // Default 1 Hz square modulation
   lpf.setResonance(180);
   acidFilter.setResonance(200);
+  effectEnabled[8] = false;
+  if (cachedEffectIndex == 8) cachedEffectIndex = 0;
 }
 
 // ==================== VARIABLES (non-Mozzi only - Mozzi objects are in .ino) ====================
@@ -64,7 +70,7 @@ bool isEffectActive(int idx) {
 
 void toggleEffectSlot(int idx) {
   if (idx < 0 || idx >= EFFECT_COUNT) return;
-  if (idx == 13 || idx == 26 || idx == 27) return;  // removed effects
+  if (isRemovedEffectSlot(idx)) return;
   if (idx == 0) {
     cachedEffectIndex = 0;
     clearAllEffects();

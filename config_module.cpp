@@ -38,7 +38,7 @@ const EnvPreset envPresets[] = {
 // ==================== EFFETS ====================
 const char* effectNames[] = {
   "None", "LPF", "HPF", "DelayBPM", "Delay2", "PhaserX", "Ladder", "ResEcho X",
-  "Acid", "Fuzz", "Flanger", "Overdrive", "BitCrush", "-", "AutoWah", "Reverb",
+  "-", "Fuzz", "Flanger", "Overdrive", "BitCrush", "-", "AutoWah", "Reverb",
   "LFO_Sin", "AutoPan", "RingMod", "LPFDown", "LPFUp", "Harmonizer", "SubHarm",
   "Formant", "LFO_Sqr", "RandMod", "-", "-"
 };

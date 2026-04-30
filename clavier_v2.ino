@@ -198,6 +198,35 @@ bool standbyActive = false;
 uint8_t noteEnergyQ8 = 0;
 uint8_t noteHoldProgressQ8 = 0;
 
+// Runtime-compiled FX chains: avoids scanning all EFFECT_COUNT slots every sample.
+uint8_t liveActiveFxList[EFFECT_COUNT] = {0};
+uint8_t liveActiveFxCount = 0;
+bool liveHasLfoSin = false;
+bool liveHasLfoSqr = false;
+uint8_t loopActiveFxList[EFFECT_COUNT] = {0};
+uint8_t loopActiveFxCount = 0;
+bool loopHasLfoSin = false;
+bool loopHasLfoSqr = false;
+
+static void buildActiveFxRuntimeFromMask(
+  const bool* mask,
+  uint8_t* outList,
+  uint8_t& outCount,
+  bool& outHasLfoSin,
+  bool& outHasLfoSqr
+) {
+  outCount = 0;
+  outHasLfoSin = mask[16];
+  outHasLfoSqr = mask[24];
+
+  for (uint8_t fx = 1; fx < EFFECT_COUNT; fx++) {
+    if (!mask[fx]) continue;
+    // Removed effects and LFO marker slots are not part of the DSP chain itself.
+    if (fx == 8 || fx == 13 || fx == 16 || fx == 24 || fx == 26 || fx == 27) continue;
+    outList[outCount++] = fx;
+  }
+}
+
 static void setStandby(bool enable) {
   if (standbyActive == enable) return;
   standbyActive = enable;
@@ -360,6 +389,11 @@ void updateControl() {
   updateDrumsControl();
   runDrumSequencer();
 
+  // Rebuild active FX lists at control rate so audio-rate processing iterates only active slots.
+  buildActiveFxRuntimeFromMask(effectEnabled, liveActiveFxList, liveActiveFxCount, liveHasLfoSin, liveHasLfoSqr);
+  const bool* loopMask = loopTrackLocked ? lockedEffectMask : effectEnabled;
+  buildActiveFxRuntimeFromMask(loopMask, loopActiveFxList, loopActiveFxCount, loopHasLfoSin, loopHasLfoSqr);
+
   int activeGates = 0;
   unsigned long youngestNoteOnMs = 0UL;
   for (int i = 0; i < VOICE_COUNT; i++) {
@@ -447,7 +481,10 @@ static inline float fastSemitoneRatio(float semi) {
 
 static int16_t applyEffectsChain(
   int16_t input,
-  const bool fxMask[EFFECT_COUNT],
+  const uint8_t* activeFxList,
+  uint8_t activeFxCount,
+  bool hasLfoSin,
+  bool hasLfoSqr,
   uint8_t fxAmt,
   uint8_t polyLoad,
   LowPassFilter& lpfRef,
@@ -474,6 +511,11 @@ static int16_t applyEffectsChain(
   uint32_t& harmPhaseQ8
 ) {
   int16_t output = input;
+  if (activeFxCount == 0) return output;
+
+  const bool densePolyLoad = polyLoad >= 2;
+  const bool heavyPolyLoad = polyLoad >= 4;
+
   uint8_t fxP1 = fxParam1;
   uint8_t fxP2 = fxParam2;
 
@@ -505,23 +547,23 @@ static int16_t applyEffectsChain(
   // Pre-calculate LFO modulation values if they are active
   int16_t lfoSineVal = 0;
   int16_t lfoSquareVal = 0;
-  if (fxMask[16]) {  // LFO_Sin is enabled
+  if (hasLfoSin) {  // LFO_Sin is enabled
     lfoSineVal = lfoModSineRef.next();
   }
-  if (fxMask[24]) {  // LFO_Sqr is enabled
+  if (hasLfoSqr) {  // LFO_Sqr is enabled
     lfoSquareVal = lfoModSquareRef.next();
   }
 
-  for (uint8_t fx = 0; fx < EFFECT_COUNT; fx++) {
-    if (fx == 0 || !fxMask[fx]) continue;
+  for (uint8_t idx = 0; idx < activeFxCount; idx++) {
+    uint8_t fx = activeFxList[idx];
     
     // Determine current P1 with LFO modulation if applicable
     uint8_t effectiveP1 = fxP1;
-    if (fxMask[16] && lfoSineTargetEffect == fx) {  // LFO_Sin modulates this effect
+    if (hasLfoSin && lfoSineTargetEffect == fx) {  // LFO_Sin modulates this effect
       int lfoDepth = ((int)lfoSineDepthParam * 180) / 255;
       int delta = (lfoSineVal * lfoDepth) >> 8;
       effectiveP1 = (uint8_t)constrain((int)fxP1 + delta, 0, 255);
-    } else if (fxMask[24] && lfoSquareTargetEffect == fx) {  // LFO_Sqr modulates this effect
+    } else if (hasLfoSqr && lfoSquareTargetEffect == fx) {  // LFO_Sqr modulates this effect
       int lfoDepth = ((int)lfoSquareDepthParam * 200) / 255;
       int16_t squareVal = (lfoSquareVal >= 0) ? 100 : -100;
       int delta = (squareVal * lfoDepth) >> 8;
@@ -559,8 +601,14 @@ static int16_t applyEffectsChain(
         int16_t delayed = delayBuf[readIdx];
         int fb = 48 + ((int)workP1 * 150) / 255;
         int wet = 30 + ((int)fxP2 * 180) / 255;
-        delayBuf[delayIdx] = (int16_t)constrain((int)output + ((int)delayed * fb >> 8), -32767, 32767);
-        output = (int16_t)((int)output + (((int)delayed * wet) >> 8));
+        if (densePolyLoad) {
+          fb = max(28, fb - 26);
+          wet = max(24, wet - 34);
+        }
+        int16_t writeIn = densePolyLoad ? compress16(output, 16500, 2) : output;
+        int32_t wr = (int32_t)writeIn + (((int32_t)delayed * fb) >> 8);
+        delayBuf[delayIdx] = compress16(wr, densePolyLoad ? 19000 : 23000, 2);
+        output = compress16((int32_t)output + (((int32_t)delayed * wet) >> 8), 22000, 2);
         break;
       }
       case 4: {
@@ -571,10 +619,14 @@ static int16_t applyEffectsChain(
         int16_t filtered = delayed - ((delayed * toneDamp) >> 8);
         int fb = 110 + ((int)workP1 * 120) / 255;
         int wet = 120 + ((int)fxAmt * 120) / 255;
+        if (densePolyLoad) {
+          fb = max(72, fb - 34);
+          wet = max(88, wet - 42);
+        }
         int32_t wr = (int32_t)output + (((int32_t)filtered * fb) >> 8);
-        delayBuf[delayIdx] = compress16(wr, 22000, 2);
+        delayBuf[delayIdx] = compress16(wr, densePolyLoad ? 19500 : 22000, 2);
         int32_t mix = (int32_t)output + (((int32_t)filtered * wet) >> 8);
-        output = compress16(mix, 25000, 2);
+        output = compress16(mix, densePolyLoad ? 20500 : 25000, 2);
         break;
       }
       case 5: {
@@ -621,52 +673,59 @@ static int16_t applyEffectsChain(
         int16_t delayed = delayBuf[readIdx];
         uint16_t centre = 140 + ((uint16_t)fxAmt * 2200U) / 255U;
         uint8_t resonance = (uint8_t)(110 + ((uint16_t)workP1 * 140U) / 255U);
+        if (densePolyLoad) resonance = (uint8_t)constrain((int)resonance - 30, 0, 255);
         resoEchoFilterRef.setCentreFreq(centre);
         resoEchoFilterRef.setResonance(resonance);
 
         int16_t filtered = (int16_t)resoEchoFilterRef.next(delayed);
         int fb = 96 + ((int)fxP2 * 140) / 255;
         int wet = 100 + ((int)fxAmt * 130) / 255;
+        if (densePolyLoad) {
+          fb = max(60, fb - 28);
+          wet = max(72, wet - 34);
+        }
 
         int32_t fbSample = (int32_t)output + (((int32_t)filtered * fb) >> 8);
-        delayBuf[delayIdx] = (int16_t)constrain(fbSample, -32767, 32767);
+        delayBuf[delayIdx] = compress16(fbSample, densePolyLoad ? 19000 : 24000, 2);
 
         int32_t wetMix = (int32_t)output + (((int32_t)filtered * wet) >> 8);
-        output = (int16_t)constrain(wetMix, -32767, 32767);
+        output = compress16(wetMix, densePolyLoad ? 20500 : 24000, 2);
         break;
       }
       case 8: {
         int16_t dryIn = output;
-        // Poly-safe path for Acid when many notes are active.
-        int16_t preIn = (polyLoad >= 4) ? compress16(dryIn, 17000, 3) : dryIn;
-        uint8_t cutoffBase = (uint8_t)(18 + ((uint16_t)fxAmt * 132U) / 255U);
-        uint8_t resonance = (uint8_t)(160 + ((uint16_t)workP1 * 95U) / 255U);
-        if (polyLoad >= 4) resonance = (uint8_t)constrain((int)resonance - 26, 0, 255);
-        int16_t lfo = fxLfoRef.next();
-        int cutoffMod = (lfo * (16 + (fxAmt >> 3))) >> 7;
-
-        // 303-ish accent: rhythmic push tied to the sequencer step.
-        bool accent = ((drumStep & 0x3) == 0) || ((drumStep & 0x7) == 5);
-        int accentBoost = accent ? (8 + (fxAmt >> 4)) : 0;
-        uint8_t cutoff = (uint8_t)constrain((int)cutoffBase + cutoffMod + accentBoost, 6, 210);
-        uint8_t resonanceAccent = (uint8_t)constrain((int)resonance + (accent ? 12 : 0), 0, 255);
-
-        // Acid is sensitive to stepped coefficient updates; keep full-rate updates.
-        acidFilterRef.setCutoffFreqAndResonance(cutoff, resonanceAccent);
-
-        int driveMul = 2 + (fxP2 >> 5) + (accent ? 1 : 0);
-        if (polyLoad >= 4) driveMul = 1 + (fxP2 >> 6);
-        int32_t driveIn = (int32_t)preIn * driveMul;
-        int16_t filtered = (int16_t)acidFilterRef.next((int16_t)constrain(driveIn, -26000, 26000));
         int16_t acidOut;
-        if (polyLoad >= 4) {
-          // Simpler output stage: lower CPU and less risk of crackles.
-          acidOut = compress16(((int32_t)filtered * 176) >> 8, 20500, 2);
+        if (densePolyLoad) {
+          // Dense chords: switch to a much lighter resonant low-pass variant.
+          int16_t preIn = compress16(dryIn, 16000, heavyPolyLoad ? 3 : 2);
+          uint8_t cutoff = (uint8_t)(14 + ((uint16_t)fxAmt * 108U) / 255U + ((uint16_t)workP1 * 28U) / 255U);
+          uint8_t resonance = (uint8_t)(118 + ((uint16_t)workP1 * 44U) / 255U);
+          lpfRef.setResonance(resonance);
+          lpfRef.setCutoffFreq(cutoff);
+          int16_t filtered = lpfRef.next(preIn);
+          acidOut = compress16(((int32_t)filtered * (heavyPolyLoad ? 160 : 172)) >> 8, 18800, 2);
         } else {
+          int16_t preIn = dryIn;
+          uint8_t cutoffBase = (uint8_t)(18 + ((uint16_t)fxAmt * 132U) / 255U);
+          uint8_t resonance = (uint8_t)(160 + ((uint16_t)workP1 * 95U) / 255U);
+          int16_t lfo = fxLfoRef.next();
+          int cutoffMod = (lfo * (16 + (fxAmt >> 3))) >> 7;
+
+          // 303-ish accent: rhythmic push tied to the sequencer step.
+          bool accent = ((drumStep & 0x3) == 0) || ((drumStep & 0x7) == 5);
+          int accentBoost = accent ? (8 + (fxAmt >> 4)) : 0;
+          uint8_t cutoff = (uint8_t)constrain((int)cutoffBase + cutoffMod + accentBoost, 6, 210);
+          uint8_t resonanceAccent = (uint8_t)constrain((int)resonance + (accent ? 12 : 0), 0, 255);
+
+          acidFilterRef.setCutoffFreqAndResonance(cutoff, resonanceAccent);
+
+          int driveMul = 2 + (fxP2 >> 5) + (accent ? 1 : 0);
+          int32_t driveIn = (int32_t)preIn * driveMul;
+          int16_t filtered = (int16_t)acidFilterRef.next((int16_t)constrain(driveIn, -26000, 26000));
           int16_t grit = softClipInt16((int32_t)filtered * (170 + (fxAmt >> 1)) / 128, (int16_t)(13000 - (fxAmt * 25)));
           acidOut = (int16_t)constrain((((int32_t)filtered * 180) + ((int32_t)grit * 76)) >> 8, -32767, 32767);
         }
-        int16_t wetOut = compress16(((int32_t)acidOut * 182) >> 8, 22000, 2);
+        int16_t wetOut = compress16(((int32_t)acidOut * (densePolyLoad ? 162 : 182)) >> 8, densePolyLoad ? 19200 : 22000, 2);
         output = (int16_t)constrain((((int32_t)dryIn * (255 - fxAmt)) + ((int32_t)wetOut * fxAmt)) >> 8, -32767, 32767);
         break;
       }
@@ -768,22 +827,36 @@ static int16_t applyEffectsChain(
         break;
       }
       case 15: {
-        // Lightweight plate-like reverb from 3 decorrelated taps.
+        // Lightweight plate-like reverb from decorrelated taps.
+        // Under dense note load, fall back to a cheaper 2-tap version.
         int sizeQ8 = 154 + ((int)workP1 * 282) / 255;  // 0.60..1.70 in Q8
         int d1 = constrain((beatSamples * 17 * sizeQ8) / (100 * 256), 110, DELAY_BUFFER_SIZE - 1);
         int d2 = constrain((beatSamples * 29 * sizeQ8) / (100 * 256), 190, DELAY_BUFFER_SIZE - 1);
-        int d3 = constrain((beatSamples * 41 * sizeQ8) / (100 * 256), 260, DELAY_BUFFER_SIZE - 1);
         int16_t t1 = delayBuf[(delayIdx - d1 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
         int16_t t2 = delayBuf[(delayIdx - d2 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
-        int16_t t3 = delayBuf[(delayIdx - d3 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
+        int32_t tail;
+        int fb;
+        int wet;
 
-        int tone = 40 + ((int)fxP2 * 140) / 255;
-        int32_t tail = ((int32_t)t1 * (160 - tone) + (int32_t)t2 * 86 + (int32_t)t3 * tone) >> 8;
-        int fb = 120 + (fxAmt >> 2);
-        delayBuf[delayIdx] = compress16((int32_t)output + ((tail * fb) >> 8), 22000, 2);
+        if (densePolyLoad) {
+          int tone = 28 + ((int)fxP2 * 88) / 255;
+          tail = ((int32_t)t1 * (176 - tone) + (int32_t)t2 * (80 + (tone >> 1))) >> 8;
+          fb = heavyPolyLoad ? 88 : 98;
+          wet = heavyPolyLoad ? 76 : 88;
+          int16_t writeIn = compress16(output, 17000, heavyPolyLoad ? 3 : 2);
+          delayBuf[delayIdx] = compress16((int32_t)writeIn + ((tail * fb) >> 8), 19500, 2);
+          output = compress16((int32_t)output + ((tail * wet) >> 8), 20500, 2);
+        } else {
+          int d3 = constrain((beatSamples * 41 * sizeQ8) / (100 * 256), 260, DELAY_BUFFER_SIZE - 1);
+          int16_t t3 = delayBuf[(delayIdx - d3 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE];
+          int tone = 40 + ((int)fxP2 * 140) / 255;
+          tail = ((int32_t)t1 * (160 - tone) + (int32_t)t2 * 86 + (int32_t)t3 * tone) >> 8;
+          fb = 120 + (fxAmt >> 2);
+          delayBuf[delayIdx] = compress16((int32_t)output + ((tail * fb) >> 8), 22000, 2);
 
-        int wet = 72 + (fxAmt >> 1);
-        output = compress16((int32_t)output + ((tail * wet) >> 8), 22000, 2);
+          wet = 72 + (fxAmt >> 1);
+          output = compress16((int32_t)output + ((tail * wet) >> 8), 22000, 2);
+        }
         break;
       }
       case 16: {
@@ -997,6 +1070,7 @@ AudioOutput updateAudio() {
     // Per-voice shape allows frozen loop timbre while changing live instrument.
     uint8_t safeShape = (uint8_t)constrain((int)voices[i].shape, 0, SHAPE_COUNT - 1);
     uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
+    bool denseVoicesLoad = activeVoicesLoad >= 2;
     bool heavyPolyLoad = activeVoicesLoad >= 4;
     switch (safeShape) {
       case 0: { // Square
@@ -1078,26 +1152,44 @@ AudioOutput updateAudio() {
         break;
       }
       case 11: { // VoxPad (cos + tri + saw detune)
-        int32_t m = (int32_t)oscCos[i].next() * 108
-                  + (int32_t)oscTri[i].next() * 82
-                  + (int32_t)oscSaw2[i].next() * 48;
-        sample = (int16_t)(((m * 14) / 10) >> 8);
+        if (heavyPolyLoad) {
+          int32_t m = (int32_t)oscCos[i].next() * 114
+                    + (int32_t)oscTri[i].next() * 86;
+          sample = (int16_t)(m >> 8);
+        } else {
+          int32_t m = (int32_t)oscCos[i].next() * 108
+                    + (int32_t)oscTri[i].next() * 82
+                    + (int32_t)oscSaw2[i].next() * 48;
+          sample = (int16_t)(((m * 14) / 10) >> 8);
+        }
         break;
       }
       case 12: { // Brass (square + saw + cheby bite)
-        int32_t m = (int32_t)oscSqr[i].next() * 102
-                  + (int32_t)oscSaw[i].next() * 104
-                  + (int32_t)oscCheby[i].next() * 62;
+        int32_t m;
+        if (heavyPolyLoad) {
+          m = (int32_t)oscSqr[i].next() * 120
+            + (int32_t)oscSaw[i].next() * 104;
+        } else {
+          m = (int32_t)oscSqr[i].next() * 102
+            + (int32_t)oscSaw[i].next() * 104
+            + (int32_t)oscCheby[i].next() * 62;
+        }
         sample = (int16_t)(m >> 8);
         break;
       }
       case 13: { // DigiFM style (table-based pseudo-ring blend)
-        int16_t c = oscCos[i].next();
-        int16_t s = oscSin[i].next();
-        int16_t fm = (int16_t)(((int32_t)c * (int32_t)s) >> 7);
-        int32_t m = (int32_t)fm * 110
-                  + (int32_t)oscTri[i].next() * 58
-                  + (int32_t)oscCheby[i].next() * 44;
+        int32_t m;
+        if (heavyPolyLoad) {
+          m = (int32_t)oscCos[i].next() * 118
+            + (int32_t)oscTri[i].next() * 66;
+        } else {
+          int16_t c = oscCos[i].next();
+          int16_t s = oscSin[i].next();
+          int16_t fm = (int16_t)(((int32_t)c * (int32_t)s) >> 7);
+          m = (int32_t)fm * 110
+            + (int32_t)oscTri[i].next() * 58
+            + (int32_t)oscCheby[i].next() * 44;
+        }
         sample = (int16_t)(m >> 8);
         break;
       }
@@ -1106,10 +1198,16 @@ AudioOutput updateAudio() {
         break;
       }
       case 15: { // NeoVox (variante plus douce de VoxPad)
-        int32_t m = (int32_t)oscCos[i].next() * 116
-                  + (int32_t)oscSin[i].next() * 76
-                  + (int32_t)oscTri[i].next() * 44;
-        sample = (int16_t)(((m * 15) / 10) >> 8);
+        if (denseVoicesLoad) {
+          int32_t m = (int32_t)oscCos[i].next() * 124
+                    + (int32_t)oscSin[i].next() * 86;
+          sample = (int16_t)(m >> 8);
+        } else {
+          int32_t m = (int32_t)oscCos[i].next() * 116
+                    + (int32_t)oscSin[i].next() * 76
+                    + (int32_t)oscTri[i].next() * 44;
+          sample = (int16_t)(((m * 15) / 10) >> 8);
+        }
         break;
       }
       case 16: { // DigiPlk (FM percussif court)
@@ -1467,7 +1565,10 @@ AudioOutput updateAudio() {
   if (masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) {
     liveOut = applyEffectsChain(
       liveInput,
-      effectEnabled,
+      liveActiveFxList,
+      liveActiveFxCount,
+      liveHasLfoSin,
+      liveHasLfoSqr,
       fxAmount,
       livePolyLoad,
       lpf,
@@ -1496,7 +1597,6 @@ AudioOutput updateAudio() {
   }
   liveOut = compress16((int32_t)liveOut + liveDryBypass, 22000, 2);
 
-  const bool* loopFxMask = loopTrackLocked ? lockedEffectMask : effectEnabled;
   uint8_t loopFxAmt = loopTrackLocked ? lockedFxAmount : fxAmount;
   uint8_t loopPolyLoad = synthActiveLoop;
 
@@ -1504,7 +1604,10 @@ AudioOutput updateAudio() {
   if (masterTrackFxEnabled[2]) {
     loopOut = applyEffectsChain(
       loopDry,
-      loopFxMask,
+      loopActiveFxList,
+      loopActiveFxCount,
+      loopHasLfoSin,
+      loopHasLfoSqr,
       loopFxAmt,
       loopPolyLoad,
       lockLpf,

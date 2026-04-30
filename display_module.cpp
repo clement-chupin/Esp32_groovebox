@@ -26,11 +26,50 @@ static int selectionPage() {
   return (int)(selectionPageIndex % 3);
 }
 
+// FX UI order (28 slots) grouped by type, with 4 shortcut duplicates to avoid empty cells.
+static constexpr int8_t kFxUiOrder[28] = {
+  // Filters
+  0, 1, 2, 6, 14,
+  // Delays / space
+  3, 4, 7, 15,
+  // Motion
+  5, 10, 17, 18,
+  // Drive / texture
+  9, 11, 12,
+  // Harmonic / formant
+  21, 22, 23, 25,
+  // LFO + dynamic filters
+  16, 24, 19, 20,
+  // Unused slots: keep page without duplicated effects
+  -1, -1, -1, -1
+};
+
 static int effectUiSlotToIndex(int uiSlot) {
   if (uiSlot < 0) return -1;
-  if (uiSlot <= 12) return uiSlot;      // 0..12 unchanged
-  if (uiSlot <= 24) return uiSlot + 1;  // skip removed slot 13
-  return -1;                            // trailing grid cells unused
+  if (uiSlot >= (int)(sizeof(kFxUiOrder) / sizeof(kFxUiOrder[0]))) return -1;
+  return (int)kFxUiOrder[uiSlot];
+}
+
+static inline bool isSelectableEffectSlot(int idx) {
+  return idx >= 0 && idx < EFFECT_COUNT && idx != 8 && idx != 13 && idx != 26 && idx != 27;
+}
+
+static uint16_t effectTypeHue(int effectIdx) {
+  if (effectIdx <= 0) return 0;
+  // Filters / formants
+  if (effectIdx == 1 || effectIdx == 2 || effectIdx == 6 || effectIdx == 14 || effectIdx == 19 || effectIdx == 20 || effectIdx == 23 || effectIdx == 25) return 19000;
+  // Delay / reverb
+  if (effectIdx == 3 || effectIdx == 4 || effectIdx == 7 || effectIdx == 15) return 42000;
+  // Motion / modulation
+  if (effectIdx == 5 || effectIdx == 10 || effectIdx == 17 || effectIdx == 18) return 32000;
+  // Drive / texture
+  if (effectIdx == 9 || effectIdx == 11 || effectIdx == 12) return 5000;
+  // Harmonic layer
+  if (effectIdx == 21 || effectIdx == 22) return 10500;
+  // LFO markers
+  if (effectIdx == 16) return 23000;
+  if (effectIdx == 24) return 3500;
+  return 44000;
 }
 
 static inline bool splitUiSlotsAvailable() {
@@ -62,8 +101,7 @@ static uint16_t selectionHueForKey(int key) {
   if (selectionPage() == 1) {
     int flat = row * COLS + col;
     int effectIdx = effectUiSlotToIndex(flat - 4);
-    if (effectIdx == 16) return 20000;  // green for LFO_Sin
-    if (effectIdx == 24) return 3500;   // orange for LFO_Sqr
+    return effectTypeHue(effectIdx);
   }
 
   if (selectionPage() == 0) {
@@ -101,7 +139,7 @@ static bool selectionKeyIsAvailable(int key) {
     }
     case 1: {
       int effectIdx = effectUiSlotToIndex(flat - 4);
-      return effectIdx >= 0 && effectIdx < EFFECT_COUNT;
+      return effectIdx == 0 || isSelectableEffectSlot(effectIdx);
     }
     case 2:
       if (row == 0) {
@@ -143,7 +181,7 @@ static bool selectionKeyIsActive(int key) {
     }
     case 1: {
       int effectIdx = effectUiSlotToIndex(flat - 4);
-      if (effectIdx < 0 || effectIdx >= EFFECT_COUNT) return false;
+      if (effectIdx != 0 && !isSelectableEffectSlot(effectIdx)) return false;
       if (effectIdx == 0) return !anyEffectEnabled();
       return effectEnabled[effectIdx];
     }
@@ -175,7 +213,7 @@ static bool selectionKeyIsDefault(int key) {
 
   if (selectionPage() == 1) {
     int effectIdx = effectUiSlotToIndex(flat - 4);
-    if (effectIdx < 0 || effectIdx >= EFFECT_COUNT) return false;
+    if (effectIdx != 0 && !isSelectableEffectSlot(effectIdx)) return false;
     return effectIdx == 0;
   }
 
@@ -185,7 +223,7 @@ static bool selectionKeyIsDefault(int key) {
 static int activeEffectCount() {
   int n = 0;
   for (int i = 1; i < EFFECT_COUNT; i++) {
-    if (effectEnabled[i]) n++;
+    if (isSelectableEffectSlot(i) && effectEnabled[i]) n++;
   }
   return n;
 }
@@ -587,7 +625,6 @@ void renderDisplay() {
     u8g2.setCursor(sx(6), 32); u8g2.print("Inst: "); u8g2.print(shapeNames[cachedShape]);
     u8g2.setCursor(sx(6), 45); u8g2.print("Env:  "); u8g2.print(envPresets[cachedEnvIndex].name);
     u8g2.setCursor(sx(6), 58); u8g2.print("Scale:"); u8g2.print(scaleNames[currentScaleIndex % 4]);
-    u8g2.setCursor(sx(6), 71); u8g2.print("FX:   ");
   }
   u8g2.setCursor(sx(6), 84); u8g2.print("FX:   ");
   int fxCount = activeEffectCount();
@@ -597,7 +634,7 @@ void renderDisplay() {
     int displayFx = cachedEffectIndex;
     if (displayFx <= 0 || displayFx >= EFFECT_COUNT || !effectEnabled[displayFx]) {
       displayFx = 1;
-      while (displayFx < EFFECT_COUNT && !effectEnabled[displayFx]) displayFx++;
+      while (displayFx < EFFECT_COUNT && (!isSelectableEffectSlot(displayFx) || !effectEnabled[displayFx])) displayFx++;
       if (displayFx >= EFFECT_COUNT) displayFx = 0;
     }
     u8g2.print(effectNames[displayFx]);

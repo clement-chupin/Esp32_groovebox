@@ -42,6 +42,28 @@ static constexpr uint8_t kSplitToggleSlot = SHAPE_COUNT;
 static constexpr uint8_t kSplitEditLeftSlot = SHAPE_COUNT + 1;
 static constexpr uint8_t kSplitEditRightSlot = SHAPE_COUNT + 2;
 
+// FX UI order (28 slots) grouped by type, with 4 shortcut duplicates to avoid empty cells.
+static constexpr int8_t kFxUiOrder[28] = {
+  // Filters
+  0, 1, 2, 6, 14,
+  // Delays / space
+  3, 4, 7, 15,
+  // Motion
+  5, 10, 17, 18,
+  // Drive / texture
+  9, 11, 12,
+  // Harmonic / formant
+  21, 22, 23, 25,
+  // LFO + dynamic filters
+  16, 24, 19, 20,
+  // Unused slots: keep page without duplicated effects
+  -1, -1, -1, -1
+};
+
+static inline bool isSelectableEffectSlot(int idx) {
+  return idx >= 0 && idx < EFFECT_COUNT && idx != 8 && idx != 13 && idx != 26 && idx != 27;
+}
+
 // Déclarées dans input_module (sera réorganisé)
 extern bool pressed[TOTAL_BUTTONS];
 extern bool justPressed[TOTAL_BUTTONS];
@@ -176,9 +198,8 @@ static SelectionCategory selectionCategoryForKey(int key) {
 
 static int effectUiSlotToIndex(int uiSlot) {
   if (uiSlot < 0) return -1;
-  if (uiSlot <= 12) return uiSlot;      // 0..12 unchanged
-  if (uiSlot <= 24) return uiSlot + 1;  // skip removed slot 13
-  return -1;
+  if (uiSlot >= (int)(sizeof(kFxUiOrder) / sizeof(kFxUiOrder[0]))) return -1;
+  return (int)kFxUiOrder[uiSlot];
 }
 
 static int selectionSlotForKey(int key) {
@@ -209,7 +230,7 @@ static int selectionSlotForKey(int key) {
 
 static int firstEnabledEffectSlot() {
   for (int i = 1; i < EFFECT_COUNT; i++) {
-    if (effectEnabled[i]) return i;
+    if (isSelectableEffectSlot(i) && effectEnabled[i]) return i;
   }
   return 0;
 }
@@ -313,7 +334,7 @@ static void applyFrozenEffects() {
   cachedEffectIndex = 0;
   clearAllEffects();
   for (int i = 1; i < EFFECT_COUNT; i++) {
-    if (freezePatch.effectMask[i]) {
+    if (isSelectableEffectSlot(i) && freezePatch.effectMask[i]) {
       effectEnabled[i] = true;
       if (cachedEffectIndex == 0) cachedEffectIndex = i;
     }
@@ -501,8 +522,7 @@ static void applySelectionChoice(uint8_t key) {
       }
       break;
     case SEL_EFFECT:
-      if (slot >= 0 && slot < EFFECT_COUNT) {
-        if (slot == 13 || slot == 26 || slot == 27) break;
+      if (isSelectableEffectSlot(slot) || slot == 0) {
         bool isLFOSlot = (slot == 16 || slot == 24);
         // When enabling an LFO, auto-attach to last enabled non-LFO effect
         if (isLFOSlot && !effectEnabled[slot]) {
