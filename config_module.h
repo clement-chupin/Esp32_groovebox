@@ -206,3 +206,21 @@ const int DISPLAY_X_SHIFT = -0;  // Décalage écran pour corriger le rognage ho
 
 // ==================== HOLD RESET ====================
 const unsigned long HOLD_RESET_MS = 500;  // Long-press reset (500ms) for instrument/arp/effect selectors
+
+// ==================== WIFI / CLOUD BACKUP ====================
+// Set ENABLE_WIFI to 1 to activate the WiFi cloud-backup feature.
+// WARNING: enabling WiFi may introduce periodic CPU interruptions that cause
+// audio glitches. Keep it at 0 for best audio stability (default).
+#define ENABLE_WIFI      0   // 0 = disabled (default), 1 = enabled
+
+// When WIFI_AP_MODE is 1 the ESP32 creates its own Wi-Fi hotspot (no router
+// needed). Set to 0 to connect to an existing network instead.
+#define WIFI_AP_MODE     1
+
+// SSID / password used for the hotspot (AP mode) or the network to join (STA mode).
+// ⚠ Change WIFI_PASSWORD before deploying; the default below is a placeholder.
+#define WIFI_SSID        "GrooveboxAP"
+#define WIFI_PASSWORD    "Gr00v3b0x!AP"
+
+// TCP port for the built-in HTTP REST server.
+#define WIFI_SERVER_PORT 80

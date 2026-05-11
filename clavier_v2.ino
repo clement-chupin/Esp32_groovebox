@@ -42,6 +42,7 @@
 #include "input_module.h"
 #include "audio_module.h"
 #include "display_module.h"
+#include "wifi_module.h"
 
 // ==================== HARDWARE OBJECTS ====================
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
@@ -1659,15 +1660,25 @@ void setup() {
   lastUserActivityMs = millis();
   
   // Désactiver WiFi/Bluetooth pour éviter les interruptions périodiques
+#if !ENABLE_WIFI
   WiFi.mode(WIFI_OFF);
   esp_bt_controller_disable();
+#else
+  // WiFi cloud-backup is enabled: keep the radio on.
+  // Bluetooth is still disabled to reduce interference.
+  esp_bt_controller_disable();
+#endif
   
   Serial.println("\n\n[BOOT] === CLAVIER V2 INIT ===");
 #if SAFE_MODE
   Serial.println("[BOOT] *** SAFE_MODE ACTIVE: I2C/SPI/LEDs DISABLED ***");
   Serial.println("[BOOT] *** Audio I2S + ADC pots ONLY ***");
 #endif
+#if !ENABLE_WIFI
   Serial.println("[BOOT] WiFi/BT disabled for audio stability");
+#else
+  Serial.println("[BOOT] WiFi enabled (cloud-backup mode); BT disabled");
+#endif
   Serial.println("[BOOT] 1/10 Serial OK");
   
   analogReadResolution(12);
@@ -1795,6 +1806,12 @@ void setup() {
 #endif
   xTaskCreatePinnedToCore(uiTask, "uiTask", 6144, nullptr, 1, &uiTaskHandle, 1);
   Serial.println("[BOOT]    uiTask created on core 1");
+
+#if ENABLE_WIFI
+  Serial.println("[BOOT]    Initializing WiFi cloud-backup...");
+  initWifi();
+  Serial.println("[BOOT]    WiFi cloud-backup task created on core 1");
+#endif
 
   // Start Mozzi AFTER tasks (as in original working version)
   Serial.println("[BOOT] 10/10 Starting Mozzi...");
