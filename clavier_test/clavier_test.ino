@@ -217,7 +217,7 @@ void uiTask(void* parameter) {
     unsigned long now = millis();
 
 #if TEST_ENABLE_POTS
-    if (now - gLastPotMs >= 8) {
+    if (now - gLastPotMs >= 100) {
       gLastPotMs = now;
       readPotsOnce();
     }

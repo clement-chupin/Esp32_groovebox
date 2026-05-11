@@ -5,6 +5,7 @@
 #include "effects_module.h"
 #include "modes_module.h"
 #include "controls_module.h"
+#include "crunchos_module.h"
 
 // External hardware references
 extern Adafruit_NeoPixel strip;
@@ -90,7 +91,7 @@ static uint16_t selectionHueForKey(int key) {
   int col = selectionColForKey(key);
   if (row < 0 || col < 0) return 0;
 
-  if (row == 0 && col < 4) return 22000;  // modes
+  if (row == 0 && col < APP_MODE_COUNT) return 22000;  // modes
   if (selectionPage() == 2 && row == 1 && col < 4) return 52000;  // BPM row
   if (selectionPage() == 2 && row == 1 && col >= 4) {
     if (col == 4) return 3000; // Chrom: rose/red
@@ -127,7 +128,7 @@ static bool selectionKeyIsAvailable(int key) {
   int col = selectionColForKey(key);
   if (row < 0 || col < 0) return false;
 
-  if (row == 0 && col < 4) return true;
+  if (row == 0 && col < APP_MODE_COUNT) return true;
 
   int flat = row * COLS + col;
   switch (selectionPage()) {
@@ -161,7 +162,7 @@ static bool selectionKeyIsActive(int key) {
   int col = selectionColForKey(key);
   if (row < 0 || col < 0) return false;
 
-  if (row == 0 && col < 4) return col == (int)currentMode;
+  if (row == 0 && col < APP_MODE_COUNT) return col == (int)currentMode;
 
   int flat = row * COLS + col;
 
@@ -346,6 +347,10 @@ void lightExtraButton(int idx, uint32_t color) {
 //  LED RENDERING
 // ============================================================
 void renderLeds() {
+  if (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT) {
+    crunchRenderLeds();
+    return;
+  }
   strip.clear();
   uint16_t t = (uint16_t)((millis() * (2 + bpm / 30)) & 0xFFFF);
   int pressedCount = countPressedMainButtons();
@@ -514,10 +519,14 @@ void renderLeds() {
     return;
   }
   
-  if (currentMode == MODE_DRUMBOX) {
-    // En mode DRUM: EXTRA_MODE_DRUMBOX = Play/Stop, EXTRA_DRUM_PLAY = Reset
-    lightExtraButton(EXTRA_MODE_DRUMBOX, dynamicColor(22000, 255, drumRun ? (blinkOn ? 255 : 70) : 100));
-    lightExtraButton(EXTRA_DRUM_PLAY, dynamicColor(0, 255, 80));  // Reset button
+  if (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT) {
+    // In drum mode, expose only the 3 general modes: Instrument / Drum / Master.
+    lightExtraButton(EXTRA_MODE_INSTRUMENT, dynamicColor(52000, 255, (currentMode == MODE_INSTRUMENT) ? 255 : 90));
+    lightExtraButton(EXTRA_MODE_DRUMBOX, dynamicColor(22000, 255, (currentMode == MODE_DRUMBOX) ? (blinkOn ? 255 : 90) : 90));
+    lightExtraButton(EXTRA_DRUM_PLAY, dynamicColor(30000, 255, (currentMode == MODE_MASTER) ? (blinkOn ? 255 : 90) : 90));
+    lightExtraButton(EXTRA_DRUM_CLEAR, dynamicColor(0, 0, 22));
+    strip.show();
+    return;
   } else if (currentMode == MODE_MASTER) {
     lightExtraButton(EXTRA_MODE_DRUMBOX, dynamicColor(18000, 255, noteRecordArmed ? (blinkOn ? 255 : 50) : 80));
     lightExtraButton(EXTRA_DRUM_PLAY, dynamicColor(30000, 255, playActive ? (blinkOn ? 255 : 70) : 100));
@@ -535,6 +544,10 @@ void renderLeds() {
 //  OLED DISPLAY RENDERING
 // ============================================================
 void renderDisplay() {
+  if (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT) {
+    crunchRenderDisplay();
+    return;
+  }
   if (drumBankTempoMenuActive) {
     u8g2.clearBuffer();
     u8g2.drawFrame(sx(0), 0, 128, 128);

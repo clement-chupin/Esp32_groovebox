@@ -42,6 +42,16 @@
 #include "input_module.h"
 #include "audio_module.h"
 #include "display_module.h"
+#include "crunchos_module.h"
+
+// ==================== CRUNCHOS OBJECTS ====================
+Tracker       crunchTracker;
+InputManager  crunchInputMgr;
+ScreenManager crunchScreenMgr;
+bool          crunchTransportRunning = false;
+char          crunchLedCmd        = ' ';
+int           crunchVolumeBars[4] = {0, 0, 0, 0};
+String        crunchNoteChars[12];
 
 // ==================== HARDWARE OBJECTS ====================
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
@@ -343,7 +353,7 @@ void uiTask(void* parameter) {
       setStandby(true);
     }
 
-    if (now - lastPotReadMs >= 8) {
+    if (now - lastPotReadMs >= 100) {
       lastPotReadMs = now;
       readPots();
       for (int i = 0; i < POT_COUNT; i++) {
@@ -369,7 +379,7 @@ void uiTask(void* parameter) {
       renderLeds();
     }
 
-    if (displayRefreshRequested && (now - lastDisplayMs >= 120)) {
+    if (displayRefreshRequested && (now - lastDisplayMs >= 100)) {
       lastDisplayMs = now;
       displayRefreshRequested = false;
       renderDisplay();
@@ -1022,6 +1032,31 @@ AudioOutput_t updateAudio() {
 #else
 AudioOutput updateAudio() {
 #endif
+  const bool drumCrunchMode = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
+  const bool instrumentCrunchMode = (currentMode == MODE_INSTRUMENT && crunchTransportRunning);
+  if (drumCrunchMode) {
+    // In drum mode, keep the same lightweight path as CrunchE/MothOS projects.
+    if (!crunchTransportRunning) {
+      return MonoOutput::from16Bit(0);
+    }
+
+    crunchTracker.UpdateTracker();
+    int32_t crunchSamp = (int32_t)crunchTracker.sample;
+    crunchSamp = (crunchSamp * 2 * (int32_t)masterTrackGainQ8[1]) >> 8;
+    if (!masterTrackFxEnabled[1]) {
+      crunchSamp >>= 1;
+    }
+
+    float vscaleDrum = masterVolume / 16000.0f;
+    if (vscaleDrum > 10.0f) vscaleDrum = 10.0f;
+    if (vscaleDrum < 0.2f) vscaleDrum = 0.2f;
+    crunchSamp = (int32_t)((float)crunchSamp * vscaleDrum * 1.20f);
+
+    if (crunchSamp > 32767) crunchSamp = 32767;
+    if (crunchSamp < -32767) crunchSamp = -32767;
+    return MonoOutput::from16Bit((int16_t)crunchSamp);
+  }
+
   int32_t mixedSynthLive = 0;
   int32_t mixedSynthLoop = 0;
   int32_t mixedDrum = 0;
@@ -1069,7 +1104,7 @@ AudioOutput updateAudio() {
     int16_t sample = 0;
     // Per-voice shape allows frozen loop timbre while changing live instrument.
     uint8_t safeShape = (uint8_t)constrain((int)voices[i].shape, 0, SHAPE_COUNT - 1);
-    uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
+    uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop + (instrumentCrunchMode ? 2 : 0));
     bool denseVoicesLoad = activeVoicesLoad >= 2;
     bool heavyPolyLoad = activeVoicesLoad >= 4;
     switch (safeShape) {
@@ -1141,14 +1176,7 @@ AudioOutput updateAudio() {
         break;
       }
       case 10: { // Sample slot (fallbacks to synth when sample engine is off)
-    #if ENABLE_SAMPLE_INSTRUMENT_ENGINE
-        sample = oscSample[i].next();
-    #else
-        int32_t m = (int32_t)oscTri[i].next() * 112
-          + (int32_t)oscSin[i].next() * 92
-          + (int32_t)oscCheby[i].next() * 40;
-        sample = (int16_t)(m >> 8);
-    #endif
+        sample = nextSmplDrumInstrumentSample((uint8_t)i, voices[i].key);
         break;
       }
       case 11: { // VoxPad (cos + tri + saw detune)
@@ -1453,6 +1481,8 @@ AudioOutput updateAudio() {
       voiceOut = (voiceOut * 152) >> 7;  // Mist +19%
     } else if (safeShape == 24) {
       voiceOut = (voiceOut * 162) >> 7;  // Halo +26%
+    } else if (safeShape == 10) {
+      voiceOut = (voiceOut * 78) >> 7;   // Smpl -39%
     }
     if (voices[i].loopVoice) {
       mixedSynthLoop += voiceOut;
@@ -1544,12 +1574,14 @@ AudioOutput updateAudio() {
   // As master volume rises, compensate drum gain so drums do not explode in level.
   float drumComp = (drumGlobalGain / (0.80f + 0.20f * vscaleForDrumComp)) * drumAmplitude;
   drumPost = (int32_t)((float)drumPost * drumComp);
+  // Drumbox legacy disabled: drum audio now comes from CrunchOS tracker samples.
+  drumPost = 0;
   if (drumPost > 28000) drumPost = 28000;
   if (drumPost < -28000) drumPost = -28000;
 
-  int16_t instDry = compress16(((int32_t)synthOutLive * (int32_t)masterTrackGainQ8[0]) >> 7, 20000, 2);
+  int16_t instDry = compress16(((int32_t)synthOutLive * (int32_t)masterTrackGainQ8[0]) >> 5, 20000, 2);
   int16_t drumDry = compress16(((int32_t)drumPost * (int32_t)masterTrackGainQ8[1]) >> 7, 20000, 2);
-  int16_t loopDry = compress16(((int32_t)synthOutLoop * (int32_t)masterTrackGainQ8[2]) >> 7, 20000, 2);
+  int16_t loopDry = compress16(((int32_t)synthOutLoop * (int32_t)masterTrackGainQ8[2]) >> 5, 20000, 2);
 
   int32_t liveFxSource = 0;
   if (masterTrackFxEnabled[0]) liveFxSource += instDry;
@@ -1562,7 +1594,7 @@ AudioOutput updateAudio() {
 
   int16_t liveOut = liveInput;
   uint8_t livePolyLoad = synthActiveLive;
-  if (masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) {
+  if ((masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) && !instrumentCrunchMode) {
     liveOut = applyEffectsChain(
       liveInput,
       liveActiveFxList,
@@ -1601,7 +1633,7 @@ AudioOutput updateAudio() {
   uint8_t loopPolyLoad = synthActiveLoop;
 
   int16_t loopOut = loopDry;
-  if (masterTrackFxEnabled[2]) {
+  if (masterTrackFxEnabled[2] && !instrumentCrunchMode) {
     loopOut = applyEffectsChain(
       loopDry,
       loopActiveFxList,
@@ -1647,7 +1679,37 @@ AudioOutput updateAudio() {
   if (final32 < -32767) final32 = -32767;
   int16_t finalSample = (int16_t)final32;
 
-  return MonoOutput::from16Bit(finalSample);
+  // ── CrunchOS Tracker : tick + mixage conditionnel ──
+  // Keep tracker audible in drum modes and while its transport is running,
+  // but avoid muting/overpowering the main instrument when idle.
+  bool crunchShouldRun = crunchTransportRunning;
+
+  if (!crunchShouldRun) {
+    return MonoOutput::from16Bit(finalSample);
+  }
+
+  crunchTracker.UpdateTracker();
+  int32_t crunchSamp = (int32_t)crunchTracker.sample;
+
+  // Master DRUM gain controls CrunchOS stream too.
+  crunchSamp = (crunchSamp * (int32_t)masterTrackGainQ8[1]) >> 8;
+  if (!masterTrackFxEnabled[1]) {
+    crunchSamp = crunchSamp >> 1;
+  }
+
+  // In instrument mode, gently duck Crunch audio when many synth voices are active.
+  uint8_t synthLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
+  if (synthLoad > 0) {
+    int duckQ8 = 232 - ((int)synthLoad * 14);
+    duckQ8 = constrain(duckQ8, 120, 232);
+    crunchSamp = (crunchSamp * duckQ8) >> 8;
+  }
+
+  int16_t crunchMix = compress16(crunchSamp, 16000, 2);
+
+  final32 = (int32_t)finalSample + (int32_t)crunchMix;
+  int16_t mixedOut = compress16(final32, 22000, 2);
+  return MonoOutput::from16Bit(mixedOut);
 }
 
 // ============================================================
@@ -1763,6 +1825,16 @@ void setup() {
   Serial.println("[BOOT] 8/10 Initializing drum module...");
   initDrums();
   Serial.println("[BOOT] 8/10 Drums OK");
+
+  // Init CrunchOS note name strings
+  {
+    static const char* noteNames[12] = {"C_","C#","D_","D#","E_","F_","F#","G_","G#","A_","A#","B"};
+    for (int i = 0; i < 12; i++) crunchNoteChars[i] = noteNames[i];
+    crunchTracker.isPlaying = false;      // REC off by default
+    crunchTransportRunning = false;       // start only on first entry to drum mode
+    noteRecordArmed = false;
+    notePlaybackRunning = crunchTransportRunning;
+  }
   
   // Init effects
   Serial.println("[BOOT] 9/10 Initializing effects module...");

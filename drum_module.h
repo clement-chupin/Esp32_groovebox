@@ -59,6 +59,8 @@ void resetDrumTransport(bool keepRunning);
 uint8_t currentDrumSteps();
 bool isSoundDrumBank(uint8_t bankIndex);
 int16_t nextSoundDrumSample(uint8_t row);
+bool getSoundDrumPoolSample(uint8_t poolIndex, const int*& data, uint32_t& len);
+void stopAllDrumVoices();
 
 // Initialisation et update
 void updateDrumsControl();

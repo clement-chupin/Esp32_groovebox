@@ -3,6 +3,7 @@
 #include "drum_module.h"
 #include "effects_module.h"
 #include "controls_module.h"
+#include "crunchos_module.h"
 
 // ==================== VARIABLES ====================
 AppMode currentMode = MODE_INSTRUMENT;
@@ -31,7 +32,7 @@ bool lockedEffectMask[EFFECT_COUNT] = {false};
 uint8_t lockedFxAmount = 128;
 uint8_t performanceStep = 0;
 uint8_t performanceLengthIndex = 1;
-uint8_t masterTrackGainQ8[3] = {255, 255, 255};
+uint8_t masterTrackGainQ8[3] = {255, 176, 255};
 bool masterTrackFxEnabled[3] = {true, false, true};
 bool instrumentSplitEnabled = false;
 uint8_t splitShapeLeft = 0;
@@ -99,6 +100,7 @@ struct RecordedLoopNote {
 static RecordedLoopNote recordedLoopNotes[MAX_RECORDED_LOOP_NOTES] = {};
 static int recordOpenSlotByKey[MAIN_BUTTONS] = {0};
 static bool recordedLoopStateInitialized = false;
+static bool drumTransportBootstrapped = false;
 static unsigned long performanceLoopStartMs = 0;
 uint8_t drumInstrSelectedRow = 0;
 static const uint8_t kPerformanceLengths[3] = {4, 8, 16};
@@ -244,7 +246,10 @@ static void ensureRecordedLoopState() {
 }
 
 static uint32_t currentPerformanceLoopMs() {
-  uint32_t stepMs = (uint32_t)constrain((60000UL / max((uint16_t)1, bpm)) / 4UL, 20UL, 2000UL);
+  // Base recording quantization on drum tempo: 1/32 by default, 1/64 in 16-step drum mode.
+  uint32_t drumStepMs = (uint32_t)constrain((60000UL / max((uint16_t)1, bpm)) / 4UL, 20UL, 2000UL);
+  uint8_t recSubDiv = (currentDrumSteps() >= 16) ? 4 : 2;
+  uint32_t stepMs = max<uint32_t>(5UL, drumStepMs / recSubDiv);
   return max<uint32_t>(stepMs * currentPerformanceLength(), 1UL);
 }
 
@@ -437,6 +442,61 @@ static void rebuildLoopPlaybackFromCurrentPhase() {
   syncLoopPlaybackAtPhase(loopPhaseQ16(millis(), loopMs));
 }
 
+// Silence only what is currently sounding in instrument/loop layers,
+// without wiping the whole recorded instrument track.
+static void silenceCurrentInstrumentNotes() {
+  ensureRecordedLoopState();
+
+  uint32_t loopMs = currentPerformanceLoopMs();
+  if (performanceLoopStartMs == 0) performanceLoopStartMs = millis();
+  uint16_t phaseQ16 = loopPhaseQ16(millis(), loopMs);
+
+  // Stop currently held live notes and close their open record slots.
+  for (int key = 0; key < MAIN_BUTTONS; key++) {
+    if (!pressed[key]) continue;
+    noteOff((uint8_t)key);
+    recordLoopNoteOff((uint8_t)key);
+  }
+
+  // Remove and stop only notes active at current phase.
+  for (int i = 0; i < MAX_RECORDED_LOOP_NOTES; i++) {
+    if (!recordedLoopNotes[i].active) continue;
+
+    bool activeNow = loopNoteShouldBeActive(recordedLoopNotes[i], phaseQ16) || recordedLoopNotes[i].playing;
+    if (!activeNow) continue;
+
+    uint8_t key = recordedLoopNotes[i].key;
+    noteOffLoopKey(key);
+    recordedLoopNotes[i].playing = false;
+    recordedLoopNotes[i].active = false;
+    recordedLoopNotes[i].hasEnd = false;
+    playbackHeld[key] = false;
+    if (recordOpenSlotByKey[key] == i) {
+      recordOpenSlotByKey[key] = -1;
+    }
+  }
+
+  // Safety: drop any dangling open slot (prevents endless held note bugs).
+  for (int key = 0; key < MAIN_BUTTONS; key++) {
+    int slot = recordOpenSlotByKey[key];
+    if (slot < 0 || slot >= MAX_RECORDED_LOOP_NOTES) continue;
+    if (!recordedLoopNotes[slot].active) {
+      recordOpenSlotByKey[key] = -1;
+      continue;
+    }
+    if (!recordedLoopNotes[slot].hasEnd && !pressed[key]) {
+      recordedLoopNotes[slot].playing = false;
+      recordedLoopNotes[slot].active = false;
+      recordOpenSlotByKey[key] = -1;
+      playbackHeld[key] = false;
+    }
+  }
+
+  if (notePlaybackRunning) {
+    rebuildLoopPlaybackFromCurrentPhase();
+  }
+}
+
 static void snapshotRecordedStep() {
 }
 
@@ -551,8 +611,8 @@ static void applySelectionChoice(uint8_t key) {
 const char* modeName(AppMode m) {
   switch (m) {
     case MODE_INSTRUMENT: return "INSTRUMENT";
-    case MODE_DRUMBOX: return "DRUMBOX";
-    case MODE_DRUM_INSTRUMENT: return "DRUM INSTR";
+    case MODE_DRUMBOX: return "DRUM";
+    case MODE_DRUM_INSTRUMENT: return "DRUM";
     case MODE_MASTER: return "MASTER";
     default: return "?";
   }
@@ -583,7 +643,10 @@ bool isSelectionModifierHeld() {
 }
 
 uint8_t currentPerformanceLength() {
-  return kPerformanceLengths[performanceLengthIndex % 3];
+  // Recording grid follows drum tempo options:
+  // - default: 32 micro-steps per loop (1/32)
+  // - 16-step drum option: 64 micro-steps per loop (1/64)
+  return (currentDrumSteps() >= 16) ? 64 : 32;
 }
 
 // ==================== EXTRA BUTTONS HANDLER ====================
@@ -597,16 +660,9 @@ void handleExtraButtons() {
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     } else if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
-      // En mode INSTRUMENT: toggle recording looper
-      noteRecordArmed = !noteRecordArmed;
-      if (noteRecordArmed && !notePlaybackRunning) {
-        notePlaybackRunning = true;
-        drumRun = true;
-        lastStepMs = millis();
-        performanceLoopStartMs = millis();
-        syncPerformanceClockToNow();
-        rebuildLoopPlaybackFromCurrentPhase();
-      }
+      // In instrument/master mode: B2 toggles CrunchOS REC ON/OFF.
+      crunchTracker.SetCommand('P', 0);
+      noteRecordArmed = crunchTracker.isPlaying;
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     }
@@ -626,17 +682,9 @@ void handleExtraButtons() {
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     } else if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
-      // En mode INSTRUMENT: toggle looper playback
-      notePlaybackRunning = !notePlaybackRunning;
-      drumRun = notePlaybackRunning;
-      if (drumRun) lastStepMs = millis();
-      if (notePlaybackRunning) {
-        performanceLoopStartMs = millis();
-        syncPerformanceClockToNow();
-        rebuildLoopPlaybackFromCurrentPhase();
-      } else {
-        releasePlaybackNotes();
-      }
+      // In instrument/master mode: B3 toggles CrunchOS START/STOP transport.
+      crunchTransportRunning = !crunchTransportRunning;
+      notePlaybackRunning = crunchTransportRunning;
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     }
@@ -650,34 +698,8 @@ void handleExtraButtons() {
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     } else if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
-      // En mode INSTRUMENT: toggle LOCK ou reset
-      if (notePlaybackRunning) {
-        // PLAY + tempo button: toggle FREE <-> LOCK.
-        if (hasRecordedContent() && !loopTrackLocked) {
-          loopTrackLocked = true;
-          captureFreezePatchFromCurrentState();
-          bakeRecordedPitchForLock();
-          applyFrozenEffects();
-        } else {
-          loopTrackLocked = false;
-        }
-        rebuildLoopPlaybackFromCurrentPhase();
-      } else {
-        // !PLAY + tempo button: reset recorded line.
-        loopTrackLocked = false;
-        performanceLengthIndex = (performanceLengthIndex + 1) % 3;
-        // Sync looper length and drumbox division (1/4, 1/8, 1/16) in both modes.
-        drumDivisionIndex = performanceLengthIndex;
-        if (drumStep >= currentDrumSteps()) drumStep = 0;
-        if (currentDrumSteps() != 16) drumEditPage = 0;
-        performanceLoopStartMs = millis();
-        syncPerformanceClockToNow();
-        clearRecordedLoop();
-        clearAllEffects();
-        cachedEffectIndex = 0;
-        releasePlaybackNotes();
-        syncArpToPerformanceStep();
-      }
+      // In instrument/master mode: B4 silences current note(s) only.
+      silenceCurrentInstrumentNotes();
       ledRefreshRequested = true;
       displayRefreshRequested = true;
     }
@@ -685,11 +707,27 @@ void handleExtraButtons() {
 }
 
 void updatePerformanceTransport() {
+  // Silence hold: tant que B4 est maintenu en mode instrument, on re-silence en continu.
+  if (currentMode == MODE_INSTRUMENT || currentMode == MODE_MASTER) {
+    if (pressed[MAIN_BUTTONS + EXTRA_DRUM_CLEAR]) {
+      static unsigned long lastSilenceHoldMs = 0;
+      unsigned long nowH = millis();
+      if (nowH - lastSilenceHoldMs >= 50) {
+        lastSilenceHoldMs = nowH;
+        silenceCurrentInstrumentNotes();
+        ledRefreshRequested = true;
+        displayRefreshRequested = true;
+      }
+    }
+  }
+
   if (!notePlaybackRunning && !noteRecordArmed) return;
 
   unsigned long now = millis();
   uint32_t loopMs = currentPerformanceLoopMs();
-  uint16_t stepMs = (uint16_t)constrain((60000UL / max((uint16_t)1, bpm)) / 4UL, 20UL, 2000UL);
+  uint32_t drumStepMs = (uint32_t)constrain((60000UL / max((uint16_t)1, bpm)) / 4UL, 20UL, 2000UL);
+  uint8_t recSubDiv = (currentDrumSteps() >= 16) ? 4 : 2;
+  uint16_t stepMs = (uint16_t)max<uint32_t>(5UL, drumStepMs / recSubDiv);
   if (performanceLoopStartMs == 0) performanceLoopStartMs = now;
   if (now - performanceLoopStartMs >= loopMs) {
     performanceLoopStartMs += ((now - performanceLoopStartMs) / loopMs) * loopMs;
@@ -784,59 +822,71 @@ void handleInstrumentMode() {
 
 // ==================== DRUM MODE ====================
 void handleDrumMode() {
-  uint8_t stepCount = currentDrumSteps();
-  for (int key = 0; key < MAIN_BUTTONS; key++) {
-    if (!justPressed[key]) continue;
-    int row = key / COLS;
-    int col = key % COLS;
-
-    if (row >= DRUM_ROWS) continue;
-    if (stepCount == 4 && col >= 4) continue;
-
-    uint8_t step = (uint8_t)col;
-    if (stepCount == 16) {
-      step = (uint8_t)(col + ((drumEditPage & 0x01) * 8));
-    }
-    if (step >= stepCount) continue;
-
-    drumPattern[row][step] = !drumPattern[row][step];
-  }
+  crunchHandleInput();
 }
 
 // ==================== DRUM INSTRUMENT MODE ====================
 void handleDrumInstrumentMode() {
-  uint8_t stepCount = currentDrumSteps();
-  for (int key = 0; key < MAIN_BUTTONS; key++) {
-    if (!justPressed[key]) continue;
-    int row = key / COLS;
-    int col = key % COLS;
-
-    // Split vertical: partie haute = timeline, partie basse = instruments.
-    if (row < 2) {
-      uint8_t step = (uint8_t)col;
-      if (stepCount == 16) {
-        // Ligne du haut = page 0, ligne suivante = page 1.
-        step = (uint8_t)(col + row * 8);
-      }
-      if (stepCount == 4 && col >= 4) continue;
-      if (step >= stepCount) continue;
-      drumPattern[drumInstrSelectedRow][step] = !drumPattern[drumInstrSelectedRow][step];
-      continue;
-    }
-
-    // Partie basse: sélectionner et jouer les instruments drum.
-    if (col < DRUM_ROWS) {
-      drumInstrSelectedRow = (uint8_t)col;
-    } else {
-      triggerDrum((uint8_t)(col - DRUM_ROWS));
-    }
-  }
+  crunchHandleInput();
 }
 
 // ==================== INPUT PROCESSING ====================
 void processInputActions() {
+  if (currentMode == MODE_DRUM_INSTRUMENT) {
+    currentMode = MODE_DRUMBOX;
+  }
+
+  const bool wasDrumMode = (previousMode == MODE_DRUMBOX || previousMode == MODE_DRUM_INSTRUMENT);
+  const bool isDrumModeNow = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
+
+  if (isDrumModeNow && !wasDrumMode) {
+    crunchTransportRunning = true;
+    notePlaybackRunning = true;
+    crunchTracker.isPlaying = true;
+    drumTransportBootstrapped = true;
+  }
+
+  const bool drumCrunchMode = isDrumModeNow;
+
+  // In CrunchOS drum modes, keep B1..B4 as direct access to the 4 main modes.
+  // This keeps the top row F1..F8 free for CrunchOS controls.
+  if (drumCrunchMode) {
+    AppMode targetMode = currentMode;
+    if (justPressed[MAIN_BUTTONS + EXTRA_MODE_INSTRUMENT]) targetMode = MODE_INSTRUMENT;
+    else if (justPressed[MAIN_BUTTONS + EXTRA_MODE_DRUMBOX]) targetMode = MODE_DRUMBOX;
+    else if (justPressed[MAIN_BUTTONS + EXTRA_DRUM_PLAY]) targetMode = MODE_MASTER;
+
+    if (targetMode != currentMode) {
+      bool leavingDrum = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT)
+                      && !(targetMode == MODE_DRUMBOX || targetMode == MODE_DRUM_INSTRUMENT);
+      if (leavingDrum) {
+        // Leaving Crunch drum control: force-stop drum and tracker audio paths.
+        drumRun = false;
+        stopAllDrumVoices();
+        // Keep Crunch transport state so composed drum tracks remain audible
+        // when returning to instrument mode.
+        notePlaybackRunning = crunchTransportRunning;
+        drumTransportBootstrapped = false;
+      }
+      selectionOverlayActive = false;
+      drumBankTempoMenuActive = false;
+      currentMode = targetMode;
+      ledRefreshRequested = true;
+      displayRefreshRequested = true;
+      return;
+    }
+
+    // Disable legacy overlays while in CrunchOS drum control.
+    if (selectionOverlayActive || drumBankTempoMenuActive) {
+      selectionOverlayActive = false;
+      drumBankTempoMenuActive = false;
+      ledRefreshRequested = true;
+      displayRefreshRequested = true;
+    }
+  }
+
   // Appui unique sur le bouton principal -> entrer/sortir du mode sélection.
-  if (justPressed[MAIN_BUTTONS + EXTRA_MODE_INSTRUMENT]) {
+  if (!drumCrunchMode && justPressed[MAIN_BUTTONS + EXTRA_MODE_INSTRUMENT]) {
     selectionOverlayActive = !selectionOverlayActive;
     if (selectionOverlayActive) {
       drumBankTempoMenuActive = false;
@@ -917,9 +967,19 @@ void processInputActions() {
     return;
   }
 
-  handleExtraButtons();
+  if (!drumCrunchMode) {
+    handleExtraButtons();
+  }
 
   if (currentMode != previousMode) {
+    bool leavingDrum = (previousMode == MODE_DRUMBOX || previousMode == MODE_DRUM_INSTRUMENT)
+                    && !(currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
+    if (leavingDrum) {
+      drumRun = false;
+      stopAllDrumVoices();
+      notePlaybackRunning = crunchTransportRunning;
+      drumTransportBootstrapped = false;
+    }
     if (previousMode == MODE_INSTRUMENT) {
       allNotesOff();
     }
@@ -930,6 +990,5 @@ void processInputActions() {
 
   if (currentMode == MODE_INSTRUMENT) handleInstrumentMode();
   else if (currentMode == MODE_DRUMBOX) handleDrumMode();
-  else if (currentMode == MODE_DRUM_INSTRUMENT) handleDrumInstrumentMode();
   else if (currentMode == MODE_MASTER) handleMasterMode();
 }

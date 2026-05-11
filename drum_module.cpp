@@ -10,14 +10,14 @@
 // Crunch_E drum bank — compact selection to fit flash budget
 // kick1=24KB kick2=18KB snare1=19KB snare2=17KB snareB3=12KB
 // hihat1=10KB snare3=18KB bongo1=21KB  →  total ~139KB
-#include "SOUNDS/Crunch_E/kick1.h"
-#include "SOUNDS/Crunch_E/kick2.h"
-#include "SOUNDS/Crunch_E/snare1.h"
-#include "SOUNDS/Crunch_E/snare2.h"
-#include "SOUNDS/Crunch_E/snareB3.h"
-#include "SOUNDS/Crunch_E/hihat1.h"
-#include "SOUNDS/Crunch_E/snare3.h"
-#include "SOUNDS/Crunch_E/bongo1.h"
+#include "SOUNDS/Crunch_E_sample/kick1.h"
+#include "SOUNDS/Crunch_E_sample/kick2.h"
+#include "SOUNDS/Crunch_E_sample/snare1.h"
+#include "SOUNDS/Crunch_E_sample/snare2.h"
+#include "SOUNDS/Crunch_E_sample/snareB3.h"
+#include "SOUNDS/Crunch_E_sample/hihat1.h"
+#include "SOUNDS/Crunch_E_sample/snare3.h"
+#include "SOUNDS/Crunch_E_sample/bongo1.h"
 
 #ifdef NUM_ELEMENTS
 #undef NUM_ELEMENTS
@@ -39,6 +39,17 @@ static const SoundDrumSampleDesc kSoundDrumPool[8] = {
   {snare3,  (uint32_t)(sizeof(snare3)  / sizeof(snare3[0]))},
   {bongo1,  (uint32_t)(sizeof(bongo1)  / sizeof(bongo1[0]))}
 };
+
+bool getSoundDrumPoolSample(uint8_t poolIndex, const int*& data, uint32_t& len) {
+  if (poolIndex >= 8) {
+    data = nullptr;
+    len = 0;
+    return false;
+  }
+  data = kSoundDrumPool[poolIndex].data;
+  len = kSoundDrumPool[poolIndex].len;
+  return (data != nullptr && len > 1);
+}
 
 // Banks: rows = [kick, snare, hihat, perc]
 // Bank 0: kick1, snare1,  hihat1, bongo1
@@ -123,6 +134,12 @@ int16_t nextSoundDrumSample(uint8_t row) {
   int32_t b = (int32_t)desc->data[idxNext];
   int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
 
+  // Fade out the last frames to avoid abrupt stop clicks.
+  uint32_t remain = (uint32_t)((desc->len - 1U) - idx);
+  if (remain < 64U) {
+    interp = (interp * (int32_t)remain) / 64;
+  }
+
   pos += soundDrumVoiceInc[row];
   if (pos >= (float)(desc->len - 1U)) {
     soundDrumVoiceActive[row] = false;
@@ -134,6 +151,7 @@ int16_t nextSoundDrumSample(uint8_t row) {
   sample16 = (sample16 * (int32_t)kSoundDrumRowGainQ8[row]) >> 8;
   sample16 >>= 1;  // User-requested extra -6 dB for all SDr banks.
   sample16 = (sample16 * 170) >> 8;  // Additional ~0.66x trim (about -3.6 dB).
+  sample16 = (sample16 * 224) >> 8;  // Small extra headroom to reduce light crackle in dense hits.
   return (int16_t)constrain(sample16, -32767, 32767);
 }
 
@@ -227,6 +245,21 @@ void resetDrumTransport(bool keepRunning) {
   drumStep = 0;
   lastStepMs = millis();
   if (!keepRunning) drumRun = false;
+}
+
+void stopAllDrumVoices() {
+  for (uint8_t r = 0; r < DRUM_ROWS; r++) {
+    drumActive[r] = false;
+    soundDrumVoiceActive[r] = false;
+    soundDrumVoicePos[r] = 0.0f;
+    soundDrumVoiceInc[r] = 1.0f;
+    drumEnv[r].noteOff();
+  }
+#if ENABLE_BURROUGHS_KICK_SAMPLE
+  drumSample.stop();
+  drumSampleActive = false;
+  drumSampleRole = 255;
+#endif
 }
 
 void runDrumSequencer() {

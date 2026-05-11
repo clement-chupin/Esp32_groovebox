@@ -60,10 +60,10 @@
 enum AppMode : uint8_t {
   MODE_INSTRUMENT = 0,
   MODE_DRUMBOX = 1,
-  MODE_DRUM_INSTRUMENT = 2,
-  MODE_MASTER = 3
+  MODE_MASTER = 2,
+  MODE_DRUM_INSTRUMENT = 3
 };
-#define APP_MODE_COUNT 4
+#define APP_MODE_COUNT 3
 
 // ==================== EXTRA BUTTONS ====================
 const uint8_t extraMcpPins[EXTRA_BUTTONS] = {8, 11, 13, 15};
@@ -206,3 +206,12 @@ const int DISPLAY_X_SHIFT = -0;  // Décalage écran pour corriger le rognage ho
 
 // ==================== HOLD RESET ====================
 const unsigned long HOLD_RESET_MS = 500;  // Long-press reset (500ms) for instrument/arp/effect selectors
+
+// ==================== CRUNCHOS COMPAT ====================
+// Symbols needed by the embedded CrunchOS Tracker/Voice engine.
+#ifndef USE_FULL_SFX_BANK
+#define USE_FULL_SFX_BANK 0
+#endif
+#ifndef POT_EFFECT_MAX
+constexpr int POT_EFFECT_MAX = 3;
+#endif

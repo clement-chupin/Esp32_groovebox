@@ -2,6 +2,7 @@
 #include "synth_module.h"
 #include "effects_module.h"
 #include "drum_module.h"
+#include "crunchos_module.h"
 
 // ==================== VARIABLES ====================
 int potRaw[5] = {0};
@@ -38,6 +39,7 @@ int invertPotValue(int raw) {
 void readPots() {
   extern AppMode currentMode;
   static uint32_t lastPotDebugMs = 0;
+  static int lastCrunchOctave = -1;
 
   for (int i = 0; i < 5; i++) {
     int raw = analogRead(POT_PINS[i]);
@@ -72,6 +74,17 @@ void readPots() {
 
   // Mapping direct sans filtre - réactivité maximale
   octaveShift = quantizeOctaveFromPot(potFilt[4]);
+
+  // In drum mode, route octave pot to CrunchOS tracker and show popup on changes.
+  if (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT) {
+    int oct = map(potFilt[4], 0, 3800, 0, 3);
+    oct = constrain(oct, 0, 3);
+    crunchTracker.ApplyPotControls(-1, potFilt[4], -1, -1, -1);
+    if (oct != lastCrunchOctave) {
+      lastCrunchOctave = oct;
+      crunchScreenMgr.ShowPotFeedback("OCT", oct, 3);
+    }
+  }
 
   // En drumbox et drum-instrument, POT_PARAM_1 contrôle l'amplitude des drums (0.5 - 1.5)
   if (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT) {
