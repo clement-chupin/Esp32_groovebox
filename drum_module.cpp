@@ -10,14 +10,142 @@
 // Crunch_E drum bank — compact selection to fit flash budget
 // kick1=24KB kick2=18KB snare1=19KB snare2=17KB snareB3=12KB
 // hihat1=10KB snare3=18KB bongo1=21KB  →  total ~139KB
-#include "SOUNDS/Crunch_E_sample/kick1.h"
-#include "SOUNDS/Crunch_E_sample/kick2.h"
-#include "SOUNDS/Crunch_E_sample/snare1.h"
-#include "SOUNDS/Crunch_E_sample/snare2.h"
-#include "SOUNDS/Crunch_E_sample/snareB3.h"
-#include "SOUNDS/Crunch_E_sample/hihat1.h"
-#include "SOUNDS/Crunch_E_sample/snare3.h"
-#include "SOUNDS/Crunch_E_sample/bongo1.h"
+#include "SOUNDS/Crunch_E/kick1.h"
+#include "SOUNDS/Crunch_E/kick2.h"
+#include "SOUNDS/Crunch_E/snare1.h"
+#include "SOUNDS/Crunch_E/snare2.h"
+#include "SOUNDS/Crunch_E/snareB3.h"
+#include "SOUNDS/Crunch_E/hihat1.h"
+#include "SOUNDS/Crunch_E/snare3.h"
+#include "SOUNDS/Crunch_E/bongo1.h"
+
+// Full Crunch_E pool for SMPL instrument (all 45 samples)
+// Remap conflicting symbol names so Crunch_E and MothOS can coexist at link time.
+#define bass1 ce_bass1
+#define bass1Length ce_bass1Length
+#include "SOUNDS/Crunch_E/bass1.h"
+#undef bass1
+#undef bass1Length
+#include "SOUNDS/Crunch_E/bass2.h"
+#define clap1 ce_clap1
+#define clap1Length ce_clap1Length
+#include "SOUNDS/Crunch_E/clap1.h"
+#undef clap1
+#undef clap1Length
+#define crash1 ce_crash1
+#define crash1Length ce_crash1Length
+#include "SOUNDS/Crunch_E/crash1.h"
+#undef crash1
+#undef crash1Length
+#define guitar1 ce_guitar1
+#define guitar1Length ce_guitar1Length
+#include "SOUNDS/Crunch_E/guitar1.h"
+#undef guitar1
+#undef guitar1Length
+#define hihat2 ce_hihat2
+#define hihat2Length ce_hihat2Length
+#include "SOUNDS/Crunch_E/hihat2.h"
+#undef hihat2
+#undef hihat2Length
+#define jbass1 ce_jbass1
+#define jbass1Length ce_jbass1Length
+#include "SOUNDS/Crunch_E/jbass1.h"
+#undef jbass1
+#undef jbass1Length
+#define jbass2 ce_jbass2
+#define jbass2Length ce_jbass2Length
+#include "SOUNDS/Crunch_E/jbass2.h"
+#undef jbass2
+#undef jbass2Length
+#define jlead1 ce_jlead1
+#define jlead1Length ce_jlead1Length
+#include "SOUNDS/Crunch_E/jlead1.h"
+#undef jlead1
+#undef jlead1Length
+#define jlead2 ce_jlead2
+#define jlead2Length ce_jlead2Length
+#include "SOUNDS/Crunch_E/jlead2.h"
+#undef jlead2
+#undef jlead2Length
+#include "SOUNDS/Crunch_E/jlead3.h"
+#include "SOUNDS/Crunch_E/jlead4.h"
+#define jpad1 ce_jpad1
+#define jpad1Length ce_jpad1Length
+#include "SOUNDS/Crunch_E/jpad1.h"
+#undef jpad1
+#undef jpad1Length
+#define kick3 ce_kick3
+#define kick3Length ce_kick3Length
+#include "SOUNDS/Crunch_E/kick3.h"
+#undef kick3
+#undef kick3Length
+#define pad1 ce_pad1
+#define pad1Length ce_pad1Length
+#include "SOUNDS/Crunch_E/pad1.h"
+#undef pad1
+#undef pad1Length
+#include "SOUNDS/Crunch_E/pad2.h"
+#define pad3 ce_pad3
+#define pad3Length ce_pad3Length
+#include "SOUNDS/Crunch_E/pad3.h"
+#undef pad3
+#undef pad3Length
+#include "SOUNDS/Crunch_E/pureSin.h"
+#include "SOUNDS/Crunch_E/pureTriSoft.h"
+#define ride1 ce_ride1
+#define ride1Length ce_ride1Length
+#include "SOUNDS/Crunch_E/ride1.h"
+#undef ride1
+#undef ride1Length
+#define sfx1 ce_sfx1
+#define sfx1Length ce_sfx1Length
+#include "SOUNDS/Crunch_E/sfx1.h"
+#undef sfx1
+#undef sfx1Length
+#define sfx2 ce_sfx2
+#define sfx2Length ce_sfx2Length
+#include "SOUNDS/Crunch_E/sfx2.h"
+#undef sfx2
+#undef sfx2Length
+#define sfx3 ce_sfx3
+#define sfx3Length ce_sfx3Length
+#include "SOUNDS/Crunch_E/sfx3.h"
+#undef sfx3
+#undef sfx3Length
+#include "SOUNDS/Crunch_E/sfx4.h"
+#define sfx5 ce_sfx5
+#define sfx5Length ce_sfx5Length
+#include "SOUNDS/Crunch_E/sfx5.h"
+#undef sfx5
+#undef sfx5Length
+#define sfx6 ce_sfx6
+#define sfx6Length ce_sfx6Length
+#include "SOUNDS/Crunch_E/sfx6.h"
+#undef sfx6
+#undef sfx6Length
+#include "SOUNDS/Crunch_E/sfx7.h"
+#include "SOUNDS/Crunch_E/sfx8.h"
+#include "SOUNDS/Crunch_E/sfx9.h"
+#include "SOUNDS/Crunch_E/sfx10.h"
+#include "SOUNDS/Crunch_E/sfx11.h"
+#include "SOUNDS/Crunch_E/sfx12.h"
+#define snareB1 ce_snareB1
+#define snareB1Length ce_snareB1Length
+#include "SOUNDS/Crunch_E/snareB1.h"
+#undef snareB1
+#undef snareB1Length
+#define snareB2 ce_snareB2
+#define snareB2Length ce_snareB2Length
+#include "SOUNDS/Crunch_E/snareB2.h"
+#undef snareB2
+#undef snareB2Length
+#include "SOUNDS/Crunch_E/synth1.h"
+#define synth2 ce_synth2
+#define synth2Length ce_synth2Length
+#include "SOUNDS/Crunch_E/synth2.h"
+#undef synth2
+#undef synth2Length
+#include "SOUNDS/Crunch_E/synth3.h"
 
 #ifdef NUM_ELEMENTS
 #undef NUM_ELEMENTS
@@ -39,17 +167,6 @@ static const SoundDrumSampleDesc kSoundDrumPool[8] = {
   {snare3,  (uint32_t)(sizeof(snare3)  / sizeof(snare3[0]))},
   {bongo1,  (uint32_t)(sizeof(bongo1)  / sizeof(bongo1[0]))}
 };
-
-bool getSoundDrumPoolSample(uint8_t poolIndex, const int*& data, uint32_t& len) {
-  if (poolIndex >= 8) {
-    data = nullptr;
-    len = 0;
-    return false;
-  }
-  data = kSoundDrumPool[poolIndex].data;
-  len = kSoundDrumPool[poolIndex].len;
-  return (data != nullptr && len > 1);
-}
 
 // Banks: rows = [kick, snare, hihat, perc]
 // Bank 0: kick1, snare1,  hihat1, bongo1
@@ -134,12 +251,6 @@ int16_t nextSoundDrumSample(uint8_t row) {
   int32_t b = (int32_t)desc->data[idxNext];
   int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
 
-  // Fade out the last frames to avoid abrupt stop clicks.
-  uint32_t remain = (uint32_t)((desc->len - 1U) - idx);
-  if (remain < 64U) {
-    interp = (interp * (int32_t)remain) / 64;
-  }
-
   pos += soundDrumVoiceInc[row];
   if (pos >= (float)(desc->len - 1U)) {
     soundDrumVoiceActive[row] = false;
@@ -151,7 +262,6 @@ int16_t nextSoundDrumSample(uint8_t row) {
   sample16 = (sample16 * (int32_t)kSoundDrumRowGainQ8[row]) >> 8;
   sample16 >>= 1;  // User-requested extra -6 dB for all SDr banks.
   sample16 = (sample16 * 170) >> 8;  // Additional ~0.66x trim (about -3.6 dB).
-  sample16 = (sample16 * 224) >> 8;  // Small extra headroom to reduce light crackle in dense hits.
   return (int16_t)constrain(sample16, -32767, 32767);
 }
 
@@ -247,21 +357,6 @@ void resetDrumTransport(bool keepRunning) {
   if (!keepRunning) drumRun = false;
 }
 
-void stopAllDrumVoices() {
-  for (uint8_t r = 0; r < DRUM_ROWS; r++) {
-    drumActive[r] = false;
-    soundDrumVoiceActive[r] = false;
-    soundDrumVoicePos[r] = 0.0f;
-    soundDrumVoiceInc[r] = 1.0f;
-    drumEnv[r].noteOff();
-  }
-#if ENABLE_BURROUGHS_KICK_SAMPLE
-  drumSample.stop();
-  drumSampleActive = false;
-  drumSampleRole = 255;
-#endif
-}
-
 void runDrumSequencer() {
   extern uint16_t bpm;
   uint16_t stepMs = (uint16_t)constrain((60000UL / bpm) / 4, 20, 2000);
@@ -320,4 +415,107 @@ void updateDrumsControl() {
     drumSampleRole = 255;
   }
   #endif
+}
+
+// ==================== SMPL ENGINE (Crunch_E one-shot samples per key) ====================
+// Utilise les 45 samples Crunch_E: key % 45 sélectionne le sample
+#define SMPL_POOL_SIZE 45
+
+struct SmplSampleDesc {
+  const int* data;
+  uint32_t len;
+};
+
+// Array des 45 samples Crunch_E (ordre alphabétique: bass1, bass2, bongo1, ...)
+static const SmplSampleDesc smplPool[SMPL_POOL_SIZE] = {
+  {ce_bass1,     ce_bass1Length},    // 0
+  {bass2,        bass2Length},       // 1
+  {bongo1,       bongo1Length},      // 2
+  {ce_clap1,     ce_clap1Length},    // 3
+  {ce_crash1,    ce_crash1Length},   // 4
+  {ce_guitar1,   ce_guitar1Length},  // 5
+  {hihat1,       hihat1Length},      // 6
+  {ce_hihat2,    ce_hihat2Length},   // 7
+  {ce_jbass1,    ce_jbass1Length},   // 8
+  {ce_jbass2,    ce_jbass2Length},   // 9
+  {ce_jlead1,    ce_jlead1Length},   // 10
+  {ce_jlead2,    ce_jlead2Length},   // 11
+  {jlead3,       jlead3Length},      // 12
+  {jlead4,       jlead4Length},      // 13
+  {ce_jpad1,     ce_jpad1Length},    // 14
+  {kick1,        kick1Length},       // 15
+  {kick2,        kick2Length},       // 16
+  {ce_kick3,     ce_kick3Length},    // 17
+  {ce_pad1,      ce_pad1Length},     // 18
+  {pad2,         pad2Length},        // 19
+  {ce_pad3,      ce_pad3Length},     // 20
+  {pureSin,      pureSinLength},     // 21
+  {pureTriSoft,  pureTriSoftLength}, // 22
+  {ce_ride1,     ce_ride1Length},    // 23
+  {ce_sfx1,      ce_sfx1Length},     // 24
+  {sfx10,        sfx10Length},       // 25
+  {sfx11,        sfx11Length},       // 26
+  {sfx12,        sfx12Length},       // 27
+  {ce_sfx2,      ce_sfx2Length},     // 28
+  {ce_sfx3,      ce_sfx3Length},     // 29
+  {sfx4,         sfx4Length},        // 30
+  {ce_sfx5,      ce_sfx5Length},     // 31
+  {ce_sfx6,      ce_sfx6Length},     // 32
+  {sfx7,         sfx7Length},        // 33
+  {sfx8,         sfx8Length},        // 34
+  {sfx9,         sfx9Length},        // 35
+  {snare1,       snare1Length},      // 36
+  {snare2,       snare2Length},      // 37
+  {snare3,       snare3Length},      // 38
+  {ce_snareB1,   ce_snareB1Length},  // 39
+  {ce_snareB2,   ce_snareB2Length},  // 40
+  {snareB3,      snareB3Length},     // 41
+  {synth1,       synth1Length},      // 42
+  {ce_synth2,    ce_synth2Length},   // 43
+  {synth3,       synth3Length},      // 44
+};
+
+static SmplSampleDesc getSmplSampleDesc(uint8_t idx) {
+  if (idx >= SMPL_POOL_SIZE) idx = 0;
+  return smplPool[idx];
+}
+
+static float smplVoicePos[VOICE_COUNT] = {0.0f};
+static uint8_t smplVoiceSmpIdx[VOICE_COUNT] = {0};  // index dans le pool (0-44, mappé via key % 45)
+static bool smplVoiceActive[VOICE_COUNT] = {false};
+
+void triggerSmplVoice(uint8_t voiceIdx, uint8_t key) {
+  if (voiceIdx >= VOICE_COUNT) return;
+  uint8_t si = key % SMPL_POOL_SIZE;
+  smplVoiceSmpIdx[voiceIdx] = si;
+  smplVoicePos[voiceIdx] = 0.0f;
+  smplVoiceActive[voiceIdx] = true;
+}
+
+int16_t nextSmplVoiceSample(uint8_t voiceIdx) {
+  if (voiceIdx >= VOICE_COUNT || !smplVoiceActive[voiceIdx]) return 0;
+  
+  SmplSampleDesc desc = getSmplSampleDesc(smplVoiceSmpIdx[voiceIdx]);
+  if (desc.data == nullptr || desc.len < 2) {
+    smplVoiceActive[voiceIdx] = false;
+    return 0;
+  }
+  
+  float pos = smplVoicePos[voiceIdx];
+  if (pos >= (float)(desc.len - 1)) {
+    smplVoiceActive[voiceIdx] = false;
+    return 0;
+  }
+  
+  uint32_t idx0 = (uint32_t)pos;
+  uint32_t idx1 = idx0 + 1;
+  float frac = pos - (float)idx0;
+  int32_t a = (int32_t)desc.data[idx0];
+  int32_t b = (int32_t)desc.data[idx1];
+  int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
+  smplVoicePos[voiceIdx] = pos + 1.0f;
+  
+  // Stronger attenuation for better balance with synth instruments (~-36 dB)
+  int32_t s = (interp >> 6);
+  return (int16_t)constrain(s, -32767, 32767);
 }

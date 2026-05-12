@@ -13,7 +13,8 @@ const char* potNames[POT_COUNT] = {
 // ==================== WAVETABLE NAMES ====================
 const char* shapeNames[] = {
   "Sqr", "Tri", "Gtr", "Bass", "Vln", "Lead", "Acid", "Hyb", "SupSaw", "Bell", "Smpl", "VoxPad", "Brass", "DigiFM",
-  "Saw", "NeoVox", "DigiPlk", "FMGlass", "Choir", "TalkBox", "VoxSwp", "Pno", "Silk", "Mist", "Halo"
+  "Saw", "NeoVox", "DigiPlk", "FMGlass", "Choir", "TalkBox", "VoxSwp", "Pno", "Silk", "Mist", "Halo",
+  "Drm"  // SHAPE_SMPL=25: Crunch_E 45 samples (one per key via key % 45, cycles through 32 touches)
 #if ENABLE_SOUND_SYNTH_BANKS
   , "SND1", "SND2", "SND3"
 #endif

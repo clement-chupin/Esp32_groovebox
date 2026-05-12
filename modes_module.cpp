@@ -359,6 +359,10 @@ static void releasePlaybackNotes() {
 }
 
 static void retuneHeldNotesToArpGrid() {
+  // No-op when neither arp nor locked loop is active: avoids 7 setFreq()
+  // calls per voice per control tick (256/s) with no audible effect.
+  if (cachedArpIndex == 0 && !loopTrackLocked) return;
+
   int8_t frozenSemi = 0;
   if (loopTrackLocked && freezePatch.arp > 0) {
     uint8_t sc = arpPresets[freezePatch.arp].stepCount;
@@ -734,6 +738,7 @@ void updatePerformanceTransport() {
   }
 
   unsigned long elapsed = now - performanceLoopStartMs;
+  static uint8_t lastUiPerformanceStep = 0xFF;
   performanceStep = (uint8_t)min((uint32_t)(currentPerformanceLength() - 1), elapsed / max<uint16_t>(stepMs, 1));
   lastPerformanceStepMs = now;
   syncArpToPerformanceStep();
@@ -741,8 +746,12 @@ void updatePerformanceTransport() {
   if (notePlaybackRunning) {
     syncLoopPlaybackAtPhase(loopPhaseQ16(now, loopMs));
   }
-  ledRefreshRequested = true;
-  displayRefreshRequested = true;
+  // Avoid forcing UI work every control tick; refresh only when transport step changes.
+  if (performanceStep != lastUiPerformanceStep) {
+    lastUiPerformanceStep = performanceStep;
+    ledRefreshRequested = true;
+    displayRefreshRequested = true;
+  }
 }
 
 void handleMasterMode() {
@@ -836,17 +845,13 @@ void processInputActions() {
     currentMode = MODE_DRUMBOX;
   }
 
-  const bool wasDrumMode = (previousMode == MODE_DRUMBOX || previousMode == MODE_DRUM_INSTRUMENT);
-  const bool isDrumModeNow = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
-
-  if (isDrumModeNow && !wasDrumMode) {
+  if (currentMode == MODE_DRUMBOX && !drumTransportBootstrapped) {
     crunchTransportRunning = true;
     notePlaybackRunning = true;
-    crunchTracker.isPlaying = true;
     drumTransportBootstrapped = true;
   }
 
-  const bool drumCrunchMode = isDrumModeNow;
+  const bool drumCrunchMode = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
 
   // In CrunchOS drum modes, keep B1..B4 as direct access to the 4 main modes.
   // This keeps the top row F1..F8 free for CrunchOS controls.
@@ -857,17 +862,6 @@ void processInputActions() {
     else if (justPressed[MAIN_BUTTONS + EXTRA_DRUM_PLAY]) targetMode = MODE_MASTER;
 
     if (targetMode != currentMode) {
-      bool leavingDrum = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT)
-                      && !(targetMode == MODE_DRUMBOX || targetMode == MODE_DRUM_INSTRUMENT);
-      if (leavingDrum) {
-        // Leaving Crunch drum control: force-stop drum and tracker audio paths.
-        drumRun = false;
-        stopAllDrumVoices();
-        // Keep Crunch transport state so composed drum tracks remain audible
-        // when returning to instrument mode.
-        notePlaybackRunning = crunchTransportRunning;
-        drumTransportBootstrapped = false;
-      }
       selectionOverlayActive = false;
       drumBankTempoMenuActive = false;
       currentMode = targetMode;
@@ -972,14 +966,6 @@ void processInputActions() {
   }
 
   if (currentMode != previousMode) {
-    bool leavingDrum = (previousMode == MODE_DRUMBOX || previousMode == MODE_DRUM_INSTRUMENT)
-                    && !(currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
-    if (leavingDrum) {
-      drumRun = false;
-      stopAllDrumVoices();
-      notePlaybackRunning = crunchTransportRunning;
-      drumTransportBootstrapped = false;
-    }
     if (previousMode == MODE_INSTRUMENT) {
       allNotesOff();
     }

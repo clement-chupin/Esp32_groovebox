@@ -14,6 +14,11 @@ Tracker::Tracker() {
   bpms[3] = 180;
   SetBPM(0);
 
+  for (int i = 0; i < 4; i++) {
+    heldNotes[i] = 0;
+    heldInsturments[i] = 0;
+  }
+
   for (int j = 0; j < 4; j++) {
     trackGainQ8[j] = 255;
     trackMuted[j] = false;
@@ -31,9 +36,6 @@ int Tracker::UpdateTracker() {
 
   float curTime = millis();
   float delta = curTime - lastMillis;
-  if (delta < 0.0f) delta = 0.0f;
-  // Large scheduling hiccups should not cause sequencer catch-up bursts.
-  if (delta > 40.0f) delta = 40.0f;
   tempoBlink = 0;
   lastMillis = curTime;
 
@@ -41,19 +43,7 @@ int Tracker::UpdateTracker() {
 
   noteTime += dbps;
 
-  int stepsToAdvance = 0;
-  if (noteTime >= 250.0f) {
-    stepsToAdvance = (int)(noteTime / 250.0f);
-    // Keep timing stable under load by limiting catch-up work per audio callback.
-    if (stepsToAdvance > 2) {
-      stepsToAdvance = 2;
-      noteTime = 0.0f;
-    } else {
-      noteTime -= 250.0f * (float)stepsToAdvance;
-    }
-  }
-
-  for (int step = 0; step < stepsToAdvance; step++) {
+  if (noteTime > 250) {
     barCount++;
     if (barCount > 3) {
       tempoBlink = 30;
@@ -74,15 +64,21 @@ int Tracker::UpdateTracker() {
       }
 
       if (note > 0) {
-        heldNotes[i] = note;
-        heldInsturments[i] = currentVoice;
-        voices[i].SetNote(note - 1, false, optOctave, optInstrument);
+          if (note != heldNotes[i] || optInstrument != heldInsturments[i] || optOctave != voices[i].recOctave) {
+            heldNotes[i] = note;
+            heldInsturments[i] = optInstrument;
+            voices[i].SetNote(note - 1, false, optOctave, optInstrument);
+          }
+        } else {
+          heldNotes[i] = 0;
+          heldInsturments[i] = 0;
       }
 
       // BPM-synced arpeggiator: one arp step per tracker beat.
       voices[i].AdvanceArpStep();
     }
 
+    noteTime -= 250;
     trackIndex++;
 
     if (trackIndex >= patternLength * (currentPattern + 1)) {
@@ -682,6 +678,10 @@ void Tracker::ClearAll(int val) {
   allPatternPlay = false;
   currentVoice = 0;
   String("DRUMS").toCharArray(oledInstString, 6);
+  for (int i = 0; i < 4; i++) {
+    heldNotes[i] = 0;
+    heldInsturments[i] = 0;
+  }
   for (int j = 0; j < 4; j++) {
     for (int i = 0; i < 512; i++) {
       tracks[j][i] = 0;

@@ -396,8 +396,17 @@ void uiTask(void* parameter) {
 void updateControl() {
   // Call module update functions
   updateSynthControl();
-  updateDrumsControl();
-  runDrumSequencer();
+  bool anyDrumActive = false;
+  for (int r = 0; r < DRUM_ROWS; r++) {
+    if (drumActive[r]) {
+      anyDrumActive = true;
+      break;
+    }
+  }
+  if (drumRun || anyDrumActive) {
+    updateDrumsControl();
+    runDrumSequencer();
+  }
 
   // Rebuild active FX lists at control rate so audio-rate processing iterates only active slots.
   buildActiveFxRuntimeFromMask(effectEnabled, liveActiveFxList, liveActiveFxCount, liveHasLfoSin, liveHasLfoSqr);
@@ -1032,31 +1041,6 @@ AudioOutput_t updateAudio() {
 #else
 AudioOutput updateAudio() {
 #endif
-  const bool drumCrunchMode = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
-  const bool instrumentCrunchMode = (currentMode == MODE_INSTRUMENT && crunchTransportRunning);
-  if (drumCrunchMode) {
-    // In drum mode, keep the same lightweight path as CrunchE/MothOS projects.
-    if (!crunchTransportRunning) {
-      return MonoOutput::from16Bit(0);
-    }
-
-    crunchTracker.UpdateTracker();
-    int32_t crunchSamp = (int32_t)crunchTracker.sample;
-    crunchSamp = (crunchSamp * 2 * (int32_t)masterTrackGainQ8[1]) >> 8;
-    if (!masterTrackFxEnabled[1]) {
-      crunchSamp >>= 1;
-    }
-
-    float vscaleDrum = masterVolume / 16000.0f;
-    if (vscaleDrum > 10.0f) vscaleDrum = 10.0f;
-    if (vscaleDrum < 0.2f) vscaleDrum = 0.2f;
-    crunchSamp = (int32_t)((float)crunchSamp * vscaleDrum * 1.20f);
-
-    if (crunchSamp > 32767) crunchSamp = 32767;
-    if (crunchSamp < -32767) crunchSamp = -32767;
-    return MonoOutput::from16Bit((int16_t)crunchSamp);
-  }
-
   int32_t mixedSynthLive = 0;
   int32_t mixedSynthLoop = 0;
   int32_t mixedDrum = 0;
@@ -1104,9 +1088,10 @@ AudioOutput updateAudio() {
     int16_t sample = 0;
     // Per-voice shape allows frozen loop timbre while changing live instrument.
     uint8_t safeShape = (uint8_t)constrain((int)voices[i].shape, 0, SHAPE_COUNT - 1);
-    uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop + (instrumentCrunchMode ? 2 : 0));
+    uint8_t activeVoicesLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
     bool denseVoicesLoad = activeVoicesLoad >= 2;
-    bool heavyPolyLoad = activeVoicesLoad >= 4;
+    bool heavyPolyLoad = activeVoicesLoad >= 3;
+    bool cpuTightLoad = activeVoicesLoad >= 3;
     switch (safeShape) {
       case 0: { // Square
         sample = oscSqr[i].next();
@@ -1176,7 +1161,14 @@ AudioOutput updateAudio() {
         break;
       }
       case 10: { // Sample slot (fallbacks to synth when sample engine is off)
-        sample = nextSmplDrumInstrumentSample((uint8_t)i, voices[i].key);
+    #if ENABLE_SAMPLE_INSTRUMENT_ENGINE
+        sample = oscSample[i].next();
+    #else
+        int32_t m = (int32_t)oscTri[i].next() * 112
+          + (int32_t)oscSin[i].next() * 92
+          + (int32_t)oscCheby[i].next() * 40;
+        sample = (int16_t)(m >> 8);
+    #endif
         break;
       }
       case 11: { // VoxPad (cos + tri + saw detune)
@@ -1226,16 +1218,19 @@ AudioOutput updateAudio() {
         break;
       }
       case 15: { // NeoVox (variante plus douce de VoxPad)
-        if (denseVoicesLoad) {
-          int32_t m = (int32_t)oscCos[i].next() * 124
+        // if (denseVoicesLoad) {
+        //   int32_t m = (int32_t)oscCos[i].next() * 124
+        //             + (int32_t)oscSin[i].next() * 86;
+        //   sample = (int16_t)(m >> 8);
+        // } else {
+        //   int32_t m = (int32_t)oscCos[i].next() * 116
+        //             + (int32_t)oscSin[i].next() * 76
+        //             + (int32_t)oscTri[i].next() * 44;
+        //   sample = (int16_t)(((m * 15) / 10) >> 8);
+        // }
+        int32_t m = (int32_t)oscCos[i].next() * 124
                     + (int32_t)oscSin[i].next() * 86;
-          sample = (int16_t)(m >> 8);
-        } else {
-          int32_t m = (int32_t)oscCos[i].next() * 116
-                    + (int32_t)oscSin[i].next() * 76
-                    + (int32_t)oscTri[i].next() * 44;
-          sample = (int16_t)(((m * 15) / 10) >> 8);
-        }
+        sample = (int16_t)(m >> 8);
         break;
       }
       case 16: { // DigiPlk (FM percussif court)
@@ -1444,6 +1439,10 @@ AudioOutput updateAudio() {
         break;
       }
     #endif
+      case SHAPE_SMPL: {
+        sample = nextSmplVoiceSample((uint8_t)i);
+        break;
+      }
       default: sample = oscSin[i].next(); break;
     }
 
@@ -1451,14 +1450,16 @@ AudioOutput updateAudio() {
     uint8_t envIdx = (uint8_t)constrain((int)voices[i].envMode, 0, ENV_PRESET_COUNT - 1);
     uint8_t curve = envPresets[envIdx].curve;
     float envShaped = envNorm;
-    if (curve > 128) {
-      float t = (curve - 128) / 127.0f;
-      float smooth = envNorm * envNorm * (3.0f - 2.0f * envNorm);  // smoothstep
-      envShaped += (smooth - envNorm) * t;
-    } else if (curve < 128) {
-      float t = (128 - curve) / 128.0f;
-      float tight = envNorm * envNorm;
-      envShaped += (tight - envNorm) * t;
+    if (!cpuTightLoad) {
+      if (curve > 128) {
+        float t = (curve - 128) / 127.0f;
+        float smooth = envNorm * envNorm * (3.0f - 2.0f * envNorm);  // smoothstep
+        envShaped += (smooth - envNorm) * t;
+      } else if (curve < 128) {
+        float t = (128 - curve) / 128.0f;
+        float tight = envNorm * envNorm;
+        envShaped += (tight - envNorm) * t;
+      }
     }
 
     float envGain = envShaped * voiceHoldGain[i] * voiceModAmp[i];
@@ -1481,8 +1482,6 @@ AudioOutput updateAudio() {
       voiceOut = (voiceOut * 152) >> 7;  // Mist +19%
     } else if (safeShape == 24) {
       voiceOut = (voiceOut * 162) >> 7;  // Halo +26%
-    } else if (safeShape == 10) {
-      voiceOut = (voiceOut * 78) >> 7;   // Smpl -39%
     }
     if (voices[i].loopVoice) {
       mixedSynthLoop += voiceOut;
@@ -1594,7 +1593,7 @@ AudioOutput updateAudio() {
 
   int16_t liveOut = liveInput;
   uint8_t livePolyLoad = synthActiveLive;
-  if ((masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) && !instrumentCrunchMode) {
+  if (masterTrackFxEnabled[0] || masterTrackFxEnabled[1]) {
     liveOut = applyEffectsChain(
       liveInput,
       liveActiveFxList,
@@ -1633,7 +1632,7 @@ AudioOutput updateAudio() {
   uint8_t loopPolyLoad = synthActiveLoop;
 
   int16_t loopOut = loopDry;
-  if (masterTrackFxEnabled[2] && !instrumentCrunchMode) {
+  if (masterTrackFxEnabled[2]) {
     loopOut = applyEffectsChain(
       loopDry,
       loopActiveFxList,
@@ -1683,33 +1682,30 @@ AudioOutput updateAudio() {
   // Keep tracker audible in drum modes and while its transport is running,
   // but avoid muting/overpowering the main instrument when idle.
   bool crunchShouldRun = crunchTransportRunning;
+  const bool inDrumMode = (currentMode == MODE_DRUMBOX || currentMode == MODE_DRUM_INSTRUMENT);
 
   if (!crunchShouldRun) {
     return MonoOutput::from16Bit(finalSample);
   }
 
+  // Keep Crunch tracker at full sample cadence to preserve original pitch.
   crunchTracker.UpdateTracker();
   int32_t crunchSamp = (int32_t)crunchTracker.sample;
-
-  // Master DRUM gain controls CrunchOS stream too.
+  if (!inDrumMode) {
+    crunchSamp = (crunchSamp * 3) >> 2;  // extra headroom in instrument mode
+  }
+  crunchSamp = crunchSamp * 2;
+  // Master DRUM gain now controls CrunchOS stream too.
   crunchSamp = (crunchSamp * (int32_t)masterTrackGainQ8[1]) >> 8;
   if (!masterTrackFxEnabled[1]) {
     crunchSamp = crunchSamp >> 1;
   }
+  int16_t crunchMixed = compress16(crunchSamp, 18000, 2);
 
-  // In instrument mode, gently duck Crunch audio when many synth voices are active.
-  uint8_t synthLoad = (uint8_t)(synthActiveLive + synthActiveLoop);
-  if (synthLoad > 0) {
-    int duckQ8 = 232 - ((int)synthLoad * 14);
-    duckQ8 = constrain(duckQ8, 120, 232);
-    crunchSamp = (crunchSamp * duckQ8) >> 8;
-  }
-
-  int16_t crunchMix = compress16(crunchSamp, 16000, 2);
-
-  final32 = (int32_t)finalSample + (int32_t)crunchMix;
-  int16_t mixedOut = compress16(final32, 22000, 2);
-  return MonoOutput::from16Bit(mixedOut);
+  final32 = (int32_t)finalSample + (int32_t)crunchMixed;
+  if (final32 >  32767) final32 =  32767;
+  if (final32 < -32767) final32 = -32767;
+  return MonoOutput::from16Bit((int16_t)final32);
 }
 
 // ============================================================

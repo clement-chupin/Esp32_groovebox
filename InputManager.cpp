@@ -62,41 +62,41 @@ void InputManager::ProcessNoteGrid(int row, int col) {
 void InputManager::ProcessMenuAction(int row, int col) {
   int col4 = col % 4;
   int action16 = row * 4 + col4;               // 0..15 within each 4x4 block
+  int action16BottomToTop = (3 - row) * 4 + col4;
 
   switch (activeMenu) {
     case 1: {  // Basic instruments/scales
-      // Match overlay labels exactly:
-      // Row0: SFX6 SCA1 SCA2 SCA3
-      // Row1: INS8 INS9 INS10 INS11
-      // Row2: INS4 INS5 INS6 INS7
-      // Row3: DRUM0 DRUM1 INS2 INS3
-      // Keep labels and actions aligned top->bottom on the 4x4 menu grid.
-      int instrAction = action16;
+      // Layout bottom->top, left->right:
+      // Row3 (bas, instrAction 0-3)  : DRUM0 DRUM1 INS2 INS3
+      // Row2        (instrAction 4-7)  : INS4 INS5 INS6 INS7
+      // Row1        (instrAction 8-11) : INS8 INS9 INS10 INS11
+      // Row0 (haut, instrAction 12-15) : SFX6 SCA1 SCA2 SCA3
+      int instrAction = action16BottomToTop;
 
       if (instrAction == 0) {
         trackCommand = 'I';
-        trackCommandArgument = 12;  // SFX6
-      } else if (instrAction >= 1 && instrAction <= 3) {
-        trackCommand = 'S';
-        trackCommandArgument = instrAction - 1;  // CHR/PNT/MAJ
-      } else if (instrAction >= 4 && instrAction <= 7) {
-        trackCommand = 'I';
-        trackCommandArgument = instrAction + 4;  // 8..11
-      } else if (instrAction >= 8 && instrAction <= 11) {
-        trackCommand = 'I';
-        trackCommandArgument = instrAction - 4;  // 4..7
-      } else if (instrAction == 12) {
-        trackCommand = 'I';
         trackCommandArgument = 0;  // DRUM0
-      } else if (instrAction == 13) {
+      } else if (instrAction == 1) {
         trackCommand = 'I';
         trackCommandArgument = 1;  // DRUM1
-      } else if (instrAction == 14) {
+      } else if (instrAction == 2) {
         trackCommand = 'I';
-        trackCommandArgument = 2;
-      } else {
+        trackCommandArgument = 2;  // INS2
+      } else if (instrAction == 3) {
         trackCommand = 'I';
-        trackCommandArgument = 3;
+        trackCommandArgument = 3;  // INS3
+      } else if (instrAction >= 4 && instrAction <= 7) {
+        trackCommand = 'I';
+        trackCommandArgument = instrAction;  // 4..7
+      } else if (instrAction >= 8 && instrAction <= 11) {
+        trackCommand = 'I';
+        trackCommandArgument = instrAction;  // 8..11
+      } else if (instrAction == 12) {
+        trackCommand = 'I';
+        trackCommandArgument = 12;  // SFX6
+      } else if (instrAction >= 13 && instrAction <= 15) {
+        trackCommand = 'S';
+        trackCommandArgument = instrAction - 13;  // SCA1/2/3
       }
       break;
     }

@@ -85,7 +85,6 @@ void noteOff(uint8_t key);
 void noteOffLoopKey(uint8_t key);
 void allNotesOff();
 int16_t nextSoundInstrumentSample(uint8_t voiceIndex, uint8_t shapeIndex);
-int16_t nextSmplDrumInstrumentSample(uint8_t voiceIndex, uint8_t key);
 
 // Initialisation
 void updateSynthControl();

@@ -59,8 +59,12 @@ void resetDrumTransport(bool keepRunning);
 uint8_t currentDrumSteps();
 bool isSoundDrumBank(uint8_t bankIndex);
 int16_t nextSoundDrumSample(uint8_t row);
-bool getSoundDrumPoolSample(uint8_t poolIndex, const int*& data, uint32_t& len);
-void stopAllDrumVoices();
 
 // Initialisation et update
 void updateDrumsControl();
+
+// ==================== SMPL ENGINE (MothOS one-shot samples) ====================
+// Déclenche le sample MothOS correspondant à la touche sur la voix polyphonique idx
+void triggerSmplVoice(uint8_t voiceIdx, uint8_t key);
+// Retourne le prochain échantillon 16-bit pour la voix polyphonique idx
+int16_t nextSmplVoiceSample(uint8_t voiceIdx);

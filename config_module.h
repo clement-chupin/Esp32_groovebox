@@ -96,10 +96,13 @@ extern const char* shapeNames[];
 #define SOUND_SYNTH_BANK_COUNT 3
 #define SOUND_SYNTH_SHAPE_FIRST BASE_SHAPE_COUNT
 
+// Shape SMPL: one-shot MothOS sample per key (polyphonie VOICE_COUNT)
+#define SHAPE_SMPL 25
+
 #if ENABLE_SOUND_SYNTH_BANKS
-#define SHAPE_COUNT (BASE_SHAPE_COUNT + SOUND_SYNTH_BANK_COUNT)
+#define SHAPE_COUNT (BASE_SHAPE_COUNT + SOUND_SYNTH_BANK_COUNT + 1)
 #else
-#define SHAPE_COUNT BASE_SHAPE_COUNT
+#define SHAPE_COUNT (BASE_SHAPE_COUNT + 1)
 #endif
 
 // ==================== ENVELOPPES ====================

@@ -4,46 +4,46 @@
 
 //drums
 
-#include "SOUNDS/MothOS_Sample/kick3.h"
-#include "SOUNDS/MothOS_Sample/hihat2.h"
-#include "SOUNDS/MothOS_Sample/snareB1.h"
-#include "SOUNDS/MothOS_Sample/snareB2.h"
-#include "SOUNDS/MothOS_Sample/clap1.h"
-#include "SOUNDS/MothOS_Sample/crash1.h"
-#include "SOUNDS/MothOS_Sample/ride1.h"
+#include "Samples/MothOS/kick3.h"
+#include "Samples/MothOS/hihat2.h"
+#include "Samples/MothOS/snareB1.h"
+#include "Samples/MothOS/snareB2.h"
+#include "Samples/MothOS/clap1.h"
+#include "Samples/MothOS/crash1.h"
+#include "Samples/MothOS/ride1.h"
 
 //sfx
 
-#include "SOUNDS/MothOS_Sample/sfx1.h"
-#include "SOUNDS/MothOS_Sample/sfx2.h"
-#include "SOUNDS/MothOS_Sample/sfx3.h"
-#include "SOUNDS/MothOS_Sample/sfx5.h"
+#include "Samples/MothOS/sfx1.h"
+#include "Samples/MothOS/sfx2.h"
+#include "Samples/MothOS/sfx3.h"
+#include "Samples/MothOS/sfx5.h"
 // sfx6 is used for instrument slot 12; include it outside the full-bank guard to avoid duplication.
 #if !USE_FULL_SFX_BANK
-#include "SOUNDS/MothOS_Sample/sfx6.h"
+#include "Samples/MothOS/sfx6.h"
 #endif
 #if USE_FULL_SFX_BANK
-#include "SOUNDS/MothOS_Sample/sfx4.h"
-#include "SOUNDS/MothOS_Sample/sfx6.h"
-#include "SOUNDS/MothOS_Sample/sfx7.h"
-#include "SOUNDS/MothOS_Sample/sfx8.h"
-#include "SOUNDS/MothOS_Sample/sfx9.h"
-#include "SOUNDS/MothOS_Sample/sfx10.h"
-#include "SOUNDS/MothOS_Sample/sfx11.h"
-#include "SOUNDS/MothOS_Sample/sfx12.h"
+#include "Samples/MothOS/sfx4.h"
+#include "Samples/MothOS/sfx6.h"
+#include "Samples/MothOS/sfx7.h"
+#include "Samples/MothOS/sfx8.h"
+#include "Samples/MothOS/sfx9.h"
+#include "Samples/MothOS/sfx10.h"
+#include "Samples/MothOS/sfx11.h"
+#include "Samples/MothOS/sfx12.h"
 #endif
 
 //instruments
-#include "SOUNDS/MothOS_Sample/bass1.h"
-#include "SOUNDS/MothOS_Sample/jbass2.h"
-#include "SOUNDS/MothOS_Sample/pad1.h"
-#include "SOUNDS/MothOS_Sample/jpad1.h"
-#include "SOUNDS/MothOS_Sample/pad3.h"
-#include "SOUNDS/MothOS_Sample/guitar1.h"
-#include "SOUNDS/MothOS_Sample/synth2.h"
-#include "SOUNDS/MothOS_Sample/jbass1.h"
-#include "SOUNDS/MothOS_Sample/jlead1.h"
-#include "SOUNDS/MothOS_Sample/jlead2.h"
+#include "Samples/MothOS/bass1.h"
+#include "Samples/MothOS/jbass2.h"
+#include "Samples/MothOS/pad1.h"
+#include "Samples/MothOS/jpad1.h"
+#include "Samples/MothOS/pad3.h"
+#include "Samples/MothOS/guitar1.h"
+#include "Samples/MothOS/synth2.h"
+#include "Samples/MothOS/jbass1.h"
+#include "Samples/MothOS/jlead1.h"
+#include "Samples/MothOS/jlead2.h"
 
 CrunchVoice::CrunchVoice() {
   samplerMode = false;

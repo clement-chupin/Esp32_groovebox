@@ -10,9 +10,9 @@
 #include <tables/waveshape_chebyshev_3rd_256_int8.h>
 #include <tables/cos2048_int8.h>
 #if ENABLE_SOUND_SYNTH_BANKS
-#include "SOUNDS/MothOS_Sample/synth1.h"
-#include "SOUNDS/MothOS_Sample/synth2.h"
-#include "SOUNDS/MothOS_Sample/synth3.h"
+#include "SOUNDS/SYNTH1.h"
+#include "SOUNDS/SYNTH2.h"
+#include "SOUNDS/SYNTH3.h"
 #endif
 
 extern bool loopTrackLocked;
@@ -148,63 +148,6 @@ static inline bool isSoundSynthShape(uint8_t shape) {
 }
 #endif
 
-static float voiceSmplSamplePos[VOICE_COUNT] = {0.0f};
-static bool voiceSmplActive[VOICE_COUNT] = {false};
-
-static uint8_t smplPoolIndexForKey(uint8_t key) {
-  // 24-note keyboard area mapping (one assigned sample per key slot).
-  static const uint8_t kMap24[24] = {
-    0, 2, 5, 7, 1, 3, 5, 4,
-    0, 6, 5, 3, 1, 4, 5, 7,
-    0, 3, 5, 6, 1, 2, 5, 4
-  };
-  return kMap24[key % 24];
-}
-
-int16_t nextSmplDrumInstrumentSample(uint8_t voiceIndex, uint8_t key) {
-  if (voiceIndex >= VOICE_COUNT || !voiceSmplActive[voiceIndex]) return 0;
-
-  uint8_t poolIndex = smplPoolIndexForKey(key);
-  const int* data = nullptr;
-  uint32_t len = 0;
-  if (!getSoundDrumPoolSample(poolIndex, data, len)) {
-    voiceSmplActive[voiceIndex] = false;
-    return 0;
-  }
-
-  float pos = voiceSmplSamplePos[voiceIndex];
-  if (pos < 0.0f) pos = 0.0f;
-  if (pos >= (float)(len - 1U)) {
-    voiceSmplActive[voiceIndex] = false;
-    return 0;
-  }
-
-  uint32_t idx = (uint32_t)pos;
-  uint32_t idxNext = idx + 1U;
-  float frac = pos - (float)idx;
-
-  int32_t a = (int32_t)data[idx];
-  int32_t b = (int32_t)data[idxNext];
-  int32_t interp = (int32_t)((1.0f - frac) * (float)a + frac * (float)b);
-
-  // Short tail fade prevents clicks when sample reader reaches the end.
-  uint32_t remain = (uint32_t)((len - 1U) - idx);
-  if (remain < 64U) {
-    interp = (interp * (int32_t)remain) / 64;
-  }
-
-  // Track pitch still changes playback speed, so key pitch remains musical.
-  float inc = constrain((voiceCurFreq[voiceIndex] / 261.63f), 0.35f, 2.0f);
-  pos += inc;
-  if (pos >= (float)(len - 1U)) {
-    voiceSmplActive[voiceIndex] = false;
-  }
-  voiceSmplSamplePos[voiceIndex] = pos;
-
-  int32_t out = interp >> 4;  // keep Smpl lower than synthesized instruments
-  return (int16_t)constrain(out, -32767, 32767);
-}
-
 int16_t nextSoundInstrumentSample(uint8_t voiceIndex, uint8_t shapeIndex) {
 #if ENABLE_SOUND_SYNTH_BANKS
   if (voiceIndex >= VOICE_COUNT || !isSoundSynthShape(shapeIndex)) return 0;
@@ -261,8 +204,6 @@ void initSynth() {
   #if ENABLE_SOUND_SYNTH_BANKS
     voiceSoundSamplePos[i] = 0.0f;
   #endif
-    voiceSmplSamplePos[i] = 0.0f;
-    voiceSmplActive[i] = false;
     voiceModPhase[i] = 0.0f;
     voiceModAmp[i] = 1.0f;
     voiceSlideStartFreq[i] = 440.0f;
@@ -428,14 +369,13 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
         voiceSoundSamplePos[slideVoice] = 0.0f;
       }
 #endif
-  if (safeShape == 10) {
-    voiceSmplSamplePos[slideVoice] = 0.0f;
-    voiceSmplActive[slideVoice] = true;
-  }
       if (!legato) {
         applyEnvPreset(slideVoice, safeEnv);
         envelope[slideVoice].noteOn();
         voiceHoldGain[slideVoice] = 1.0f;
+      }
+      if (safeShape == SHAPE_SMPL) {
+        triggerSmplVoice((uint8_t)slideVoice, key);
       }
       voiceNoteOnMs[slideVoice] = millis();
       return;
@@ -454,14 +394,13 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
         voiceSoundSamplePos[i] = 0.0f;
       }
 #endif
-  if (safeShape == 10) {
-    voiceSmplSamplePos[i] = 0.0f;
-    voiceSmplActive[i] = true;
-  }
       voicePitchEnvSemi[i] = (safeEnv == ENV_MODE_PITCH) ? 7.0f : 0.0f;
       voiceHoldGain[i] = 1.0f;
       applyEnvPreset(i, safeEnv);
       envelope[i].noteOn();
+      if (safeShape == SHAPE_SMPL) {
+        triggerSmplVoice((uint8_t)i, key);
+      }
       voiceNoteOnMs[i] = millis();
       return;
     }
@@ -523,16 +462,15 @@ void noteOnPatched(uint8_t key, float baseFreq, float playFreq, uint8_t shape, u
     voiceSoundSamplePos[idx] = 0.0f;
   }
 #endif
-  if (safeShape == 10) {
-    voiceSmplSamplePos[idx] = 0.0f;
-    voiceSmplActive[idx] = true;
-  }
   voicePitchEnvSemi[idx] = (safeEnv == ENV_MODE_PITCH) ? 7.0f : 0.0f;
   voiceHoldGain[idx] = 1.0f;
   voiceSlideStartFreq[idx] = playFreq;
   voiceSlideProgress[idx] = 1.0f;
   applyEnvPreset(idx, safeEnv);
   envelope[idx].noteOn();
+  if (safeShape == SHAPE_SMPL) {
+    triggerSmplVoice((uint8_t)idx, key);
+  }
   voiceNoteOnMs[idx] = millis();
 }
 
@@ -553,7 +491,6 @@ void noteOff(uint8_t key) {
         }
       }
       voices[i].gate = false;
-      voiceSmplActive[i] = false;
       envelope[i].noteOff();
     }
   }
@@ -575,7 +512,6 @@ void noteOffLoopKey(uint8_t key) {
         }
       }
       voices[i].gate = false;
-      voiceSmplActive[i] = false;
       envelope[i].noteOff();
     }
   }
@@ -590,7 +526,6 @@ void allNotesOff() {
     voices[i].active = false;
     voices[i].gate = false;
     voices[i].loopVoice = false;
-    voiceSmplActive[i] = false;
     envelope[i].noteOff();
   }
 }
@@ -666,8 +601,10 @@ void updateSynthControl() {
     if (voiceModPhase[i] > 6.28318f) voiceModPhase[i] -= 6.28318f;
 
     float depthSemi = 0.04f + 0.015f * (float)(voices[i].shape % 5);
-    float vibMul = powf(2.0f, (sinf(voiceModPhase[i]) * depthSemi) / 12.0f);
-    voiceModAmp[i] = 0.92f + 0.08f * (0.5f + 0.5f * sinf(voiceModPhase[i] * 0.7f + (float)i * 0.3f));
+    // Linear approx of pow(2, x/12) valid for |x| < 0.1 semitone (max depth ~0.08)
+    float sinMain = sinf(voiceModPhase[i]);
+    float vibMul = 1.0f + (sinMain * depthSemi) * 0.05776f;
+    voiceModAmp[i] = 0.92f + 0.04f * (sinMain + 1.0f);  // reuse sinMain, same range 0.92-1.0
 
     float modFreq = voiceCurFreq[i] * vibMul;
     setVoiceFreq(i, modFreq);
